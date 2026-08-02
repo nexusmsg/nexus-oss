@@ -145,6 +145,7 @@ Status: Completed
 | 2026-08-02 | `go test ./...` after implementation | Passed; 20 tests |
 | 2026-08-02 | `go vet ./...` after implementation | Passed |
 | 2026-08-02 | Oracle implementation review | Fixed context sender normalization, added JSON-level typed payload coverage, reconciled tracker status |
+| 2026-08-02 | Disabled default WhatsMeow stdout logger and added inbound event logging | Passed; `go test ./...` 21 tests and `go vet ./...` passed |
 
 ## Decisions
 

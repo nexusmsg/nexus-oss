@@ -46,7 +46,17 @@ func (h *Handler) Handle(ctx context.Context) func(evt any) {
 }
 
 func (h *Handler) handleMessage(ctx context.Context, evt *events.Message) {
-	if h.messageService == nil || evt == nil {
+	if evt == nil {
+		return
+	}
+	h.logger.Printf(
+		"received incoming WhatsMeow message: id=%s from=%s type=%s from_me=%t",
+		evt.Info.ID,
+		evt.Info.Sender.User,
+		evt.Info.Type,
+		evt.Info.IsFromMe,
+	)
+	if h.messageService == nil {
 		return
 	}
 

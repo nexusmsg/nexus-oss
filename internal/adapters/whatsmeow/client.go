@@ -24,8 +24,7 @@ func NewClient(ctx context.Context, container *sqlstore.Container) (*Client, err
 		return nil, err
 	}
 
-	clientLog := waLog.Stdout("Client", "DEBUG", true)
-	c.client = whatsmeow.NewClient(device, clientLog)
+	c.client = whatsmeow.NewClient(device, waLog.Noop)
 
 	return c, nil
 }
