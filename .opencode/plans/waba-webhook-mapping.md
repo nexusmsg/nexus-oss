@@ -2,17 +2,17 @@
 
 ## Current Status
 
-- Overall status: Completed for the logging-only scope
+- Overall status: Completed for the current mapped-event scope
 - Current milestone: Milestone 5 completed
-- Logging-only mode: Confirmed
-- Webhook forwarding: Deferred
+- Logging-only mode: Available when `WEBHOOK_URL` is empty
+- Webhook forwarding: Enabled
 - Media download flow: Deferred
 
 ## Scope
 
 Translate inbound `whatsmeow` message events into payloads matching the WhatsApp Business API webhook shape, then log the final JSON payload from `internal/service/message.go`.
 
-This phase does not send HTTP webhooks and does not implement media download endpoints.
+The current implementation logs payloads and sends HTTP webhooks when configured; media download endpoints are not implemented.
 
 ## Milestones
 
@@ -83,15 +83,15 @@ Status: Completed
 - [x] Ignore self-sent messages.
 - [x] Marshal the final payload as JSON.
 - [x] Log the final JSON payload from the service.
-- [x] Do not call `WebhookForwarder` in this phase.
-- [x] Remove unused webhook client wiring from `cmd/main.go`.
+- [x] Call `WebhookForwarder` after logging the final payload.
+- [x] Wire the webhook client into `cmd/main.go`.
 
 Acceptance criteria:
 
 - Each accepted inbound event produces one logged WABA-shaped JSON payload.
 - The logged JSON contains the final mapped payload, not raw WhatsMeow data.
 - Optional unsupported fields are omitted.
-- No HTTP request is made.
+- No HTTP request is made for self-sent events or when `WEBHOOK_URL` is empty.
 
 ### Milestone 4: Automated Tests
 
@@ -104,6 +104,9 @@ Status: Completed
 - [x] Add service test for unsupported messages.
 - [x] Add service test for self-sent messages.
 - [x] Add service test for nil input; dependency validation is not applicable because logging is the only service dependency in this phase.
+- [x] Add service test verifying the forwarder receives the mapped payload.
+- [x] Add webhook adapter tests for JSON delivery, HMAC signature, and non-2xx responses.
+- [x] Add webhook adapter test for canceled request context.
 - [x] Add handler tests using representative WhatsMeow protobuf messages for each in-scope type.
 - [x] Validate serialized output by decoding the logged JSON and checking the WABA contract fields.
 
@@ -132,8 +135,8 @@ Status: Completed
 - [ ] Implement `GET /media/{media_id}`.
 - [ ] Implement temporary download tokens.
 - [ ] Implement `GET /download/{token}`.
-- [ ] Re-enable HTTP webhook forwarding.
-- [ ] Add HMAC signature delivery for forwarded webhooks.
+- [x] Re-enable HTTP webhook forwarding.
+- [x] Add HMAC signature delivery for forwarded webhooks.
 
 ## Verification Log
 
@@ -146,10 +149,13 @@ Status: Completed
 | 2026-08-02 | `go vet ./...` after implementation | Passed |
 | 2026-08-02 | Oracle implementation review | Fixed context sender normalization, added JSON-level typed payload coverage, reconciled tracker status |
 | 2026-08-02 | Disabled default WhatsMeow stdout logger and added inbound event logging | Passed; `go test ./...` 21 tests and `go vet ./...` passed |
+| 2026-08-02 | Enabled HTTP webhook forwarding with context propagation and adapter tests | Passed; `go test ./...` 25 tests and `go vet ./...` passed |
+| 2026-08-02 | Documented HMAC behavior and tested canceled request context | Passed |
 
 ## Decisions
 
 - Payload construction remains in the service layer.
 - WhatsMeow-specific translation remains in the WhatsMeow adapter.
-- This implementation phase logs payloads only and does not forward them over HTTP.
+- The service logs the final payload and forwards it through the injected `WebhookForwarder` when configured.
+- HTTP forwarding uses `WEBHOOK_URL`, optional `WEBHOOK_SECRET`, and `X-Hub-Signature-256` HMAC signing.
 - Media ID generation and media download are separate follow-up milestones.

@@ -11,9 +11,20 @@ import (
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 )
 
+type recordingForwarder struct {
+	called  bool
+	payload domain.WebhookPayload
+}
+
+func (f *recordingForwarder) Forward(_ context.Context, payload domain.WebhookPayload) error {
+	f.called = true
+	f.payload = payload
+	return nil
+}
+
 func TestMessageInboundLogsWABAPayload(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0))
+	svc := NewMessage(log.New(&output, "", 0), nil)
 
 	err := svc.Inbound(context.Background(), &domain.InboundEvent{
 		BusinessAccountID:  "business-123",
@@ -57,7 +68,7 @@ func TestMessageInboundLogsWABAPayload(t *testing.T) {
 
 func TestMessageInboundIgnoresSelfSentMessage(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0))
+	svc := NewMessage(log.New(&output, "", 0), nil)
 
 	err := svc.Inbound(context.Background(), &domain.InboundEvent{IsFromMe: true})
 	if err != nil {
@@ -68,8 +79,30 @@ func TestMessageInboundIgnoresSelfSentMessage(t *testing.T) {
 	}
 }
 
+func TestMessageInboundForwardsPayload(t *testing.T) {
+	forwarder := &recordingForwarder{}
+	svc := NewMessage(log.Default(), forwarder)
+
+	err := svc.Inbound(context.Background(), &domain.InboundEvent{
+		BusinessAccountID: "business-123",
+		Message: domain.MessageEvent{
+			Type: domain.MessageEventTypeText,
+			Text: "hello",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Inbound() error = %v", err)
+	}
+	if !forwarder.called {
+		t.Fatal("forwarder was not called")
+	}
+	if forwarder.payload.Entry[0].ID != "business-123" {
+		t.Errorf("entry ID = %q", forwarder.payload.Entry[0].ID)
+	}
+}
+
 func TestMessageInboundRejectsNilEvent(t *testing.T) {
-	svc := NewMessage(log.Default())
+	svc := NewMessage(log.Default(), nil)
 	if err := svc.Inbound(context.Background(), nil); err == nil {
 		t.Fatal("Inbound(nil) returned nil error")
 	}
@@ -208,7 +241,7 @@ func TestMessageInboundLogsTypedPayloads(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var output bytes.Buffer
-			svc := NewMessage(log.New(&output, "", 0))
+			svc := NewMessage(log.New(&output, "", 0), nil)
 			err := svc.Inbound(context.Background(), &domain.InboundEvent{Message: tt.event})
 			if err != nil {
 				t.Fatalf("Inbound() error = %v", err)

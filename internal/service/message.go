@@ -11,19 +11,20 @@ import (
 )
 
 type Message struct {
-	logger *log.Logger
+	logger    *log.Logger
+	forwarder ports.WebhookForwarder
 }
 
 var _ ports.MessageService = (*Message)(nil)
 
-func NewMessage(logger *log.Logger) *Message {
+func NewMessage(logger *log.Logger, forwarder ports.WebhookForwarder) *Message {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Message{logger: logger}
+	return &Message{logger: logger, forwarder: forwarder}
 }
 
-func (s *Message) Inbound(_ context.Context, event *domain.InboundEvent) error {
+func (s *Message) Inbound(ctx context.Context, event *domain.InboundEvent) error {
 	if event == nil {
 		return fmt.Errorf("inbound event is nil")
 	}
@@ -58,6 +59,11 @@ func (s *Message) Inbound(_ context.Context, event *domain.InboundEvent) error {
 		return fmt.Errorf("marshal inbound WABA payload: %w", err)
 	}
 	s.logger.Printf("inbound WABA webhook payload: %s", encoded)
+	if s.forwarder != nil {
+		if err := s.forwarder.Forward(ctx, payload); err != nil {
+			return fmt.Errorf("forward inbound WABA webhook: %w", err)
+		}
+	}
 	return nil
 }
 

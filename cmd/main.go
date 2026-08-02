@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/whatsmeow"
 	"github.com/afikrim/waba-api-unofficial/internal/config"
+	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/afikrim/waba-api-unofficial/internal/service"
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -19,7 +20,8 @@ func main() {
 
 	cfg := config.Load()
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	container, err := sqlstore.New(ctx, "sqlite3", "file:whatsmeow.db?_foreign_keys=on", nil)
 	if err != nil {
 		log.Fatalf("initialize whatsmeow store: %v", err)
@@ -30,7 +32,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize whatsapp client: %v", err)
 	}
-	svc := service.NewMessage(log.Default())
+	var forwarder ports.WebhookForwarder
+	if cfg.Webhook.URL != "" {
+		forwarder = webhook.NewClient(cfg.Webhook.URL, cfg.Webhook.Secret)
+	} else {
+		log.Println("WEBHOOK_URL is empty; webhook forwarding is disabled")
+	}
+	svc := service.NewMessage(log.Default(), forwarder)
 	eventHandler := whatsmeow.NewHandler(
 		svc,
 		cfg.Webhook.BusinessAccountID,
@@ -46,9 +54,7 @@ func main() {
 	}
 	defer waClient.Disconnect()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	<-ctx.Done()
 
 	log.Println("shutting down")
 }

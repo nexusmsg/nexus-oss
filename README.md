@@ -20,14 +20,14 @@ cmd/main.go                             # Application composition root
 internal/
   adapters/
     whatsmeow/                          # WhatsApp client adapter (whatsmeow)
-    webhook/                            # HTTP webhook adapter for future forwarding
+    webhook/                            # HTTP webhook adapter and HMAC signing
   config/config.go                      # Application configuration
   core/
     domain/                             # Internal event and WABA payload types
     ports/
       message_service.go               # Inbound message service interface
       webhook_forwarder.go             # Webhook forwarding interface
-  service/message.go                    # Message mapping and logging service
+  service/message.go                    # Message mapping, logging, and forwarding
 ```
 
 ## Getting Started
@@ -47,8 +47,13 @@ go run cmd/main.go
 ## Current Runtime Behavior
 
 Inbound WhatsMeow messages are translated into WhatsApp Business API-shaped
-webhook JSON and logged by the service. HTTP webhook forwarding and media
-download endpoints are not enabled yet.
+webhook JSON, logged by the service, and forwarded to the configured webhook
+endpoint. Media download endpoints are not enabled yet.
+
+Forwarding is enabled when `WEBHOOK_URL` is set. If it is empty, messages are
+still logged but are not sent over HTTP. Requests have a 15-second timeout.
+When `WEBHOOK_SECRET` is set, requests include an `X-Hub-Signature-256` HMAC
+signature using the exact JSON request body.
 
 The payload metadata is configured through environment variables:
 
@@ -56,6 +61,8 @@ The payload metadata is configured through environment variables:
 BUSINESS_ACCOUNT_ID
 PHONE_NUMBER_ID
 DISPLAY_PHONE_NUMBER
+WEBHOOK_URL
+WEBHOOK_SECRET
 ```
 
 ## License
