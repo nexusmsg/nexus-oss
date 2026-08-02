@@ -1,0 +1,48 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test binary
+*.test
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# Build output
+/tmp/
+/out/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Dependencies
+vendor/
+
+# Deepwork session state
+.slim/deepwork/
+
+# Local OpenCode index artifacts
+.opencode/index/
