@@ -6,10 +6,10 @@ The project receives WhatsMeow message events, maps supported event types into
 WhatsApp Business API-shaped webhook payloads, logs the final JSON payload, and
 forwards it to a configured HTTP endpoint.
 
-Latest relevant commit before this handoff:
+Latest relevant commit:
 
 ```text
-9796739 feat: enable webhook forwarding
+d5cbc2e feat: add Direct Send HTTP API
 ```
 
 Verification at previous handoff:
