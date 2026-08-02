@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/httpapi"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/whatsmeow"
 	"github.com/afikrim/waba-api-unofficial/internal/config"
@@ -39,6 +44,7 @@ func main() {
 		log.Println("WEBHOOK_URL is empty; webhook forwarding is disabled")
 	}
 	svc := service.NewMessage(log.Default(), forwarder)
+	outboundService := service.NewOutbound(waClient)
 	eventHandler := whatsmeow.NewHandler(
 		svc,
 		cfg.Webhook.BusinessAccountID,
@@ -54,7 +60,24 @@ func main() {
 	}
 	defer waClient.Disconnect()
 
-	<-ctx.Done()
+	apiServer := httpapi.NewServer(outboundService, cfg.Webhook.PhoneNumberID, cfg.APIAuthToken)
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- apiServer.Start(fmt.Sprintf(":%d", cfg.Port))
+	}()
+
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("http server stopped: %v", err)
+		}
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := apiServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown http server: %v", err)
+		}
+	}
 
 	log.Println("shutting down")
 }
