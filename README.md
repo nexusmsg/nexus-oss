@@ -149,4 +149,4 @@ full authentication message support remain deferred.
 
 ## License
 
-MIT
+[MIT](LICENSE)
