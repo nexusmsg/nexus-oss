@@ -5,6 +5,7 @@
     "build": "go build -o bin/worker ./cmd",
     "dev": "go run ./cmd",
     "test": "go test ./...",
-    "lint": "gofmt -l ."
+    "lint": "gofmt -l .",
+    "migrate": "go run ./cmd/migrate"
   }
 }

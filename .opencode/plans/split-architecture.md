@@ -267,9 +267,10 @@ Echo HTTP adapter removed.
 1. **M1 — Monorepo restructure:** Turborepo root (`package.json`, `turbo.json`),
    `apps/.gitkeep`, move Go code to `services/worker/`, scaffold
    `services/api` (Hono hello-world + turbo tasks). Go tests still green.
-2. **M2 — Supabase schema + migrations:** write `shared/db/migrations`
-   (golang-migrate format) for `jobs` + `webhook_configs`; wire golang-migrate
-   execution into the worker; local Supabase for dev/testing.
+2. **M2 — Supabase schema + migrations (Completed):** `shared/db/migrations`
+   (golang-migrate format) for `jobs` + `webhook_configs`; `cmd/migrate` in
+   the worker (`SUPABASE_DSN`, `MIGRATIONS_DIR`, pgx5 driver). Verified against
+   a throwaway postgres:16 container.
 3. **M3 — services/api:** enqueue + synchronous result wait + auth + internal
    webhook-config API; API tests (Hono + Vitest).
 4. **M4 — services/worker:** `ClientRegistry` (multi-device) + queue consumer +
@@ -298,3 +299,11 @@ Echo HTTP adapter removed.
 - Webhook config management surface (CRUD API/UI in `apps/` later).
 - Device provisioning flow (registering phone numbers, QR login lifecycle,
   reconnection policy).
+
+## Verification Log
+
+| Date | Milestone | Command | Result |
+| ---- | --------- | ------- | ------ |
+| 2026-08-03 | M1 | `npm run build`, `npm run test` (turbo); `go vet ./...` | 2/2 build, 2/2 test, vet clean |
+| 2026-08-03 | M2 | `go test ./...`, `go vet ./...` (services/worker) | 32 tests, 9 packages; vet clean |
+| 2026-08-03 | M2 | `cmd/migrate` against postgres:16 container | up→v2, idempotent "no change", down→v1, up→v2 |

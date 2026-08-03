@@ -18,7 +18,18 @@ Root commands: `npm install`, then `npm run dev` / `npm run build` /
 `../../README.md` point back to the repo root.
 
 
+## Migrations (M2)
+
+- Schema migrations live in `../../shared/db/migrations/` (golang-migrate
+  format): `000001_create_jobs`, `000002_create_webhook_configs`.
+- `cmd/migrate` applies them: `SUPABASE_DSN=... go run ./cmd/migrate
+  -direction up` (also `down [-steps N]` and `version`). `MIGRATIONS_DIR`
+  defaults to `../../shared/db/migrations`.
+- Verified against a throwaway postgres:16 container: up → v2, idempotent,
+  down 1 step → v1, up → v2.
+
 ## Current Status
+
 
 The project receives WhatsMeow message events, maps supported event types into
 WhatsApp Business API-shaped webhook payloads, logs the final JSON payload, and
@@ -97,6 +108,8 @@ WEBHOOK_URL="http://localhost:8080/webhook"
 WEBHOOK_SECRET="optional-secret"
 API_AUTH_TOKEN="optional-token"
 PORT="8080"
+SUPABASE_DSN="postgresql://user:pass@host:5432/db"
+MIGRATIONS_DIR="../../shared/db/migrations"
 ```
 
 Run the application with:
@@ -152,6 +165,8 @@ Do not invent schemas or media IDs for these types without first updating
 - `cmd/main.go`: dependency composition and shutdown lifecycle.
 - `internal/adapters/httpapi/server.go`: Echo v4 Direct Send server.
 - `internal/service/outbound.go`: Direct Send validation and response mapping.
+- `cmd/migrate/main.go`: golang-migrate migration runner (`SUPABASE_DSN`).
+- `../../shared/db/migrations/`: Supabase schema migrations (golang-migrate).
 
 ## Unused Code Cleanup
 

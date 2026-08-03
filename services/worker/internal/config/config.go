@@ -14,15 +14,19 @@ type WebhookConfig struct {
 }
 
 type Config struct {
-	Port         int
-	APIAuthToken string
-	Webhook      WebhookConfig
+	Port          int
+	APIAuthToken  string
+	SupabaseDSN   string
+	MigrationsDir string
+	Webhook       WebhookConfig
 }
 
 func Load() *Config {
 	return &Config{
-		Port:         getEnvInt("PORT", 8080),
-		APIAuthToken: getEnv("API_AUTH_TOKEN", ""),
+		Port:          getEnvInt("PORT", 8080),
+		APIAuthToken:  getEnv("API_AUTH_TOKEN", ""),
+		SupabaseDSN:   getEnv("SUPABASE_DSN", ""),
+		MigrationsDir: getEnv("MIGRATIONS_DIR", "../../shared/db/migrations"),
 		Webhook: WebhookConfig{
 			URL:                getEnv("WEBHOOK_URL", ""),
 			Secret:             getEnv("WEBHOOK_SECRET", ""),
