@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PostgrestClient } from "@supabase/postgrest-js";
 import { SupabaseTransport } from "./transport.js";
 
 type ChainResult = { data: unknown; error: unknown };
 
 interface ChainLogEntry {
-  op: "insert" | "select" | "eq";
+  op: "insert" | "select" | "eq" | "is";
   row?: unknown;
   columns?: string;
   column?: string;
@@ -13,7 +13,7 @@ interface ChainLogEntry {
 }
 
 /**
- * Minimal query-builder fake for `SupabaseClient`: every chain terminator
+ * Minimal query-builder fake for `PostgrestClient`: every chain terminator
  * resolves the next queued result in FIFO order. Good enough to exercise the
  * transport's insert / poll / fetch logic without a database.
  */
@@ -32,6 +32,10 @@ function createFakeSupabase(results: ChainResult[]) {
       log.push({ op: "eq", column, value });
       return chain;
     },
+    is(column: string, value: unknown) {
+      log.push({ op: "is", column, value });
+      return chain;
+    },
     single() {
       return Promise.resolve(results.shift() ?? { data: null, error: null });
     },
@@ -39,7 +43,7 @@ function createFakeSupabase(results: ChainResult[]) {
       return Promise.resolve(results.shift() ?? { data: null, error: null });
     },
   };
-  const client = { from: () => chain } as unknown as SupabaseClient;
+  const client = { from: () => chain } as unknown as PostgrestClient;
   return { client, log };
 }
 
@@ -107,10 +111,10 @@ describe("SupabaseTransport.enqueue", () => {
 
     expect(serial).toBe("existing-serial");
     // The follow-up lookup filters by idempotency_key and soft-delete.
-    const eqs = log.filter((e) => e.op === "eq");
-    expect(eqs).toEqual([
+    const ops = log.filter((e) => e.op === "eq" || e.op === "is");
+    expect(ops).toEqual([
       { op: "eq", column: "idempotency_key", value: "k-1" },
-      { op: "eq", column: "deleted_at", value: null },
+      { op: "is", column: "deleted_at", value: null },
     ]);
   });
 
@@ -150,10 +154,10 @@ describe("SupabaseTransport.poll", () => {
     const result = await transport.poll("serial-1");
 
     expect(result).toEqual({ status: "failed", result: null, lastError: "boom" });
-    const eqs = log.filter((e) => e.op === "eq");
-    expect(eqs).toEqual([
+    const ops = log.filter((e) => e.op === "eq" || e.op === "is");
+    expect(ops).toEqual([
       { op: "eq", column: "serial", value: "serial-1" },
-      { op: "eq", column: "deleted_at", value: null },
+      { op: "is", column: "deleted_at", value: null },
     ]);
   });
 
@@ -178,9 +182,9 @@ describe("SupabaseTransport.getWebhookConfig", () => {
       webhook_url: "https://hooks.example.com",
       webhook_secret: "s3cret",
     });
-    const eqs = log.filter((e) => e.op === "eq");
-    expect(eqs[0]).toEqual({ op: "eq", column: "phone_number_id", value: "12345" });
-    expect(eqs[1]).toEqual({ op: "eq", column: "deleted_at", value: null });
+    const ops = log.filter((e) => e.op === "eq" || e.op === "is");
+    expect(ops[0]).toEqual({ op: "eq", column: "phone_number_id", value: "12345" });
+    expect(ops[1]).toEqual({ op: "is", column: "deleted_at", value: null });
   });
 
   it("returns null when no config exists", async () => {

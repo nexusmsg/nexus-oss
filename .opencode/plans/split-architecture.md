@@ -387,9 +387,12 @@ it. Two options:
    (`result.wa_message_id` contract) + inbound webhook-config provider
    (`apiconfig`, TTL cache); Echo adapter removed; `WABA_DEVICES`
    `phone_number_id:number` pairs.
-6. **M6 — Integration + cleanup:** remove Echo adapter remnants, end-to-end
-   run in the compose stack, update `README.md`, `HANDOFF.md`, and this plan;
-   `gofmt`/`go test ./...`/`go vet ./...` + API test run.
+6. **M6 — Integration + cleanup (Completed):** end-to-end run in the compose
+   stack; live e2e confirmed API→PostgREST→jobs→worker consumer→executor→WABA
+   error envelope; integration gaps found and fixed (PostgREST dev keys were
+   plain strings → now HS256 JWTs; supabase-js `/rest/v1` suffix vs bare
+   PostgREST → `@supabase/postgrest-js`; `.eq("deleted_at", null)` → `.is()`
+   SQLSTATE 22007); `README.md` + this plan updated; Go checks + API tests pass.
 
 ## Acceptance Criteria
 
@@ -430,3 +433,6 @@ it. Two options:
 | 2026-08-03 | M4.5 | Vercel compat: `hono/vercel` handle + api/ entry + compose.ts split | tsc clean; 51 tests; local server 200; api/index.ts imports clean (no listener); docker compose build api OK |
 | 2026-08-04 | M5 | `go test ./...`, `go vet ./...`, `CGO_ENABLED=0 go build ./...` (services/worker) | 58 tests, 10 packages; vet clean; build OK (multi-device registry + queue consumer + executor + apiconfig; Echo adapter removed, echo deps dropped) |
 | 2026-08-04 | M5 | queue store integration test vs compose postgres (:5433) | 4 passed: Claim/Complete/RetryLater/Fail, result JSON contains wa_message_id, self-cleaning |
+| 2026-08-04 | M6 | `go test ./...`, `go vet ./...`, CGO build (worker) + `npm run build`/`test` (api) | Go 58 tests / 10 pkgs, vet clean, CGO-free build OK; api tsc clean, 51 tests |
+| 2026-08-04 | M6 | e2e compose: `POST /1001/messages` through the stack | Job enqueued (PostgREST 201) → worker claimed, 3 attempts, failed → API polled to terminal → WABA 500 with `last_error: executor: no sender for phone number id "1001"` (~5.9s) — proves full API→PostgREST→jobs→worker→executor→response chain |
+| 2026-08-04 | M6 | Integration gap fixes (found during e2e) | ① PostgREST 401 PGRST301 on plain dev keys → dev keys now HS256 JWTs (`{"role":"postgres"}` signed with PGRST_JWT_SECRET) ② supabase-js appended `/rest/v1` → PGRST125 on bare PostgREST (prefix is Kong's job in real Supabase) → swapped to `@supabase/postgrest-js` (URL used as-is) ③ poll `deleted_at=eq.null` → SQLSTATE 22007 → `.is("deleted_at", null)`; all live-verified (200/201/204 + graceful 500) |

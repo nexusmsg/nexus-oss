@@ -77,10 +77,53 @@ Details, mapping rules, and handoff notes: `services/worker/HANDOFF.md`,
 
 ## API (Node.js Hono)
 
-The API service lives in `services/api/` and is scaffolded. It will expose the
-WABA-compatible send endpoint, enqueue jobs into Supabase, wait for the worker
-result, and return the official WABA response shape (see the architecture
-plan).
+The API service lives in `services/api/` — a WABA-compatible HTTP surface on
+Hono, deployable on Vercel (`api/` directory entry, no listener in the Vercel
+handler):
+
+- `POST /:phone_number_id/messages` — bearer auth (`API_AUTH_TOKEN`), WABA
+  validation (mirrors the worker's outbound rules), optional idempotency key
+  (header wins over body), enqueues a `send_message` job, polls until the
+  worker completes, returns the official WABA 200 envelope with the real
+  `wamid`, or a WABA error envelope (504 on timeout).
+- `GET /internal/webhook-config?phone_number_id=...` — worker-facing, bearer
+  auth (`INTERNAL_TOKEN`), returns the customer webhook URL/secret used for
+  inbound forwarding.
+
+API configuration (env): `PORT`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `API_AUTH_TOKEN`, `INTERNAL_TOKEN`,
+`SEND_TIMEOUT_MS`, `RESULT_POLL_MS`.
+
+## Local End-to-End Test
+
+1. `docker compose up --build -d` from the repo root (Postgres, PostgREST,
+   migrations, API, worker).
+2. Configure devices in `.env` and recreate the API + worker:
+   ```bash
+   echo "WABA_DEVICES=1001:628123456789" >> .env   # phone_number_id:number pairs
+   docker compose up -d --force-recreate api worker
+   ```
+3. Link WhatsApp: watch the worker logs
+   (`docker compose logs -f worker`) and scan the `QR code [628123456789]: ...`
+   with WhatsApp → Linked devices. Wait until QR output stops (device
+   connected).
+4. Register a customer webhook destination so inbound messages forward:
+   ```bash
+   docker compose exec postgres psql -U postgres -d waba -c \
+     "insert into webhook_configs (phone_number_id, webhook_url, webhook_secret) \
+      values ('1001', 'http://host.docker.internal:8081/webhook', 'optional-secret');"
+   ```
+   Point `webhook_url` at any receiver you control (e.g., a local echo server
+   on host port 8081).
+5. Send an outbound text message:
+   ```bash
+   curl -X POST http://localhost:3000/1001/messages \
+     -H 'Content-Type: application/json' \
+     -d '{"messaging_product":"whatsapp","to":"628987654321","type":"text","text":{"body":"hello from waba-api"}}'
+   ```
+   Expect 200 with `messages[].id` = the real `wamid`. Message that number to
+   see the inbound payload forwarded to your webhook with
+   `X-Hub-Signature-256` HMAC.
 
 ## License
 

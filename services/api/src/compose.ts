@@ -6,7 +6,7 @@
  * (`api/index.ts`) call `buildApp(config)` with their own config.
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { PostgrestClient } from "@supabase/postgrest-js";
 import type { Hono } from "hono";
 import { createApp } from "./adapters/http/app.js";
 import { SupabaseTransport } from "./adapters/supabase/transport.js";
@@ -23,8 +23,16 @@ export function buildApp(config: Config): Hono {
       "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set to serve the API",
     );
   }
-  const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
-  const transport: JobTransport = new SupabaseTransport(supabase);
+  // PostgrestClient uses the URL as-is (no /rest/v1 suffix), so it works
+  // against the local bare PostgREST and real Supabase (use the full
+  // https://<project>.supabase.co/rest/v1 base there).
+  const postgrest = new PostgrestClient(config.supabaseUrl, {
+    headers: {
+      apikey: config.supabaseServiceRoleKey,
+      Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+    },
+  });
+  const transport: JobTransport = new SupabaseTransport(postgrest);
   const sendMessage: SendMessagePort = new SendMessageService({
     transport,
     sendTimeoutMs: config.sendTimeoutMs,

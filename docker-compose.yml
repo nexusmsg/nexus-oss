@@ -53,8 +53,10 @@ services:
     environment:
       PORT: "3000"
       SUPABASE_URL: http://postgrest:3000
-      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-anon-dev-key}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-service-dev-key}
+      # Dev keys are HS256 JWTs (role: postgres) signed with PGRST_JWT_SECRET;
+      # PostgREST rejects plain-string bearer tokens (PGRST301).
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoicG9zdGdyZXMifQ.d4y_K_hxLZpO3fNZxeZqabxMtleGVqtL44GxxPprm5A}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoicG9zdGdyZXMifQ.d4y_K_hxLZpO3fNZxeZqabxMtleGVqtL44GxxPprm5A}
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
     ports:

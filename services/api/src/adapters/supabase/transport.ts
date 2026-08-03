@@ -1,21 +1,26 @@
 /**
  * Supabase-backed implementation of the JobTransport driven port.
  *
+ * Uses @supabase/postgrest-js's `PostgrestClient` (not supabase-js) because
+ * it talks to PostgREST directly: the URL is used as-is, whereas supabase-js
+ * appends `/rest/v1` (matching Supabase's Kong routing) and fails against a
+ * bare PostgREST instance.
+ *
  * PostgREST surfaces the unique-constraint violation as HTTP 409 with SQLSTATE
- * 23505; supabase-js reports it via `error.code`. A 409 with HTTP status may
+ * 23505; postgrest-js reports it via `error.code`. A 409 with HTTP status may
  * also surface as code "409" depending on PostgREST version.
  */
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { PostgrestClient } from "@supabase/postgrest-js";
 import type { WebhookConfig } from "../../domain/webhook-config.js";
 import type { EnqueueInput, JobTransport, PollResult } from "../../ports/job-transport.js";
 
 const UNIQUE_VIOLATION_CODES = new Set(["23505", "409"]);
 
 export class SupabaseTransport implements JobTransport {
-  private readonly client: SupabaseClient;
+  private readonly client: PostgrestClient;
 
-  constructor(client: SupabaseClient) {
+  constructor(client: PostgrestClient) {
     this.client = client;
   }
 
@@ -61,7 +66,7 @@ export class SupabaseTransport implements JobTransport {
       .from("jobs")
       .select("status,result,last_error")
       .eq("serial", serial)
-      .eq("deleted_at", null)
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (error) {
@@ -82,7 +87,7 @@ export class SupabaseTransport implements JobTransport {
       .from("webhook_configs")
       .select("webhook_url,webhook_secret")
       .eq("phone_number_id", phoneNumberId)
-      .eq("deleted_at", null)
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (error) {
@@ -105,7 +110,7 @@ export class SupabaseTransport implements JobTransport {
       .from("jobs")
       .select("serial,status")
       .eq(column, value)
-      .eq("deleted_at", null)
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (error) {
@@ -115,7 +120,7 @@ export class SupabaseTransport implements JobTransport {
   }
 }
 
-export { createClient };
+export { PostgrestClient };
 
 /** Compile-time assertion (Go convention): SupabaseTransport implements JobTransport. */
 const _: JobTransport = undefined as unknown as SupabaseTransport;
