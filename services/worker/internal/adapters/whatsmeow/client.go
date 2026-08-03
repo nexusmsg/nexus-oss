@@ -4,16 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
+// reconnectInterval is the delay between reconnect attempts after an
+// unexpected disconnect.
+const reconnectInterval = 5 * time.Second
+
+// Client is a per-device WhatsApp sender. It serializes outbound sends through
+// a bounded worker queue and owns the connection lifecycle of a single device.
 type Client struct {
 	client     *whatsmeow.Client
 	send       func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
@@ -23,6 +29,12 @@ type Client struct {
 	workerDone chan struct{}
 	stateMu    sync.RWMutex
 	closed     bool
+	// reconnectGate serializes reconnect loops so concurrent Disconnected
+	// events cannot spawn overlapping connect attempts.
+	reconnectGate chan struct{}
+	// number identifies the device in QR output and log lines.
+	number string
+	logger *log.Logger
 }
 
 type sendCommand struct {
@@ -36,31 +48,38 @@ type sendResponse struct {
 	err    error
 }
 
-func NewClient(ctx context.Context, container *sqlstore.Container) (*Client, error) {
+// newClient builds a per-device sender around raw and starts its send worker.
+// The device number labels QR output and log lines.
+func newClient(raw *whatsmeow.Client, number string, logger *log.Logger) *Client {
+	if logger == nil {
+		logger = log.Default()
+	}
 	workerCtx, workerStop := context.WithCancel(context.Background())
 	c := &Client{
-		sendQueue:  make(chan sendCommand, 32),
-		workerCtx:  workerCtx,
-		workerStop: workerStop,
-		workerDone: make(chan struct{}),
-	}
-
-	device, err := container.GetFirstDevice(ctx)
-	if err != nil {
-		workerStop()
-		return nil, err
-	}
-
-	c.client = whatsmeow.NewClient(device, waLog.Noop)
-	c.send = func(ctx context.Context, to types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
-		return c.client.SendMessage(ctx, to, message)
+		client: raw,
+		send: func(ctx context.Context, to types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+			return raw.SendMessage(ctx, to, message)
+		},
+		sendQueue:     make(chan sendCommand, 32),
+		workerCtx:     workerCtx,
+		workerStop:    workerStop,
+		workerDone:    make(chan struct{}),
+		reconnectGate: make(chan struct{}, 1),
+		number:        number,
+		logger:        logger,
 	}
 	go c.sendLoop()
-
-	return c, nil
+	return c
 }
 
+// Connect connects this device, running QR pairing when no session is stored.
 func (c *Client) Connect(ctx context.Context) error {
+	return c.connect(ctx)
+}
+
+// connect establishes the websocket connection for the device. Devices without
+// a stored session print QR codes for manual pairing.
+func (c *Client) connect(ctx context.Context) error {
 	if c.client.Store.ID == nil {
 		// No ID stored, new login
 		qrChan, err := c.client.GetQRChannel(ctx)
@@ -76,9 +95,9 @@ func (c *Client) Connect(ctx context.Context) error {
 				// Render the QR code here
 				// e.g. qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 				// or just manually `echo 2@... | qrencode -t ansiutf8` in a terminal
-				fmt.Println("QR code:", evt.Code)
+				fmt.Printf("QR code [%s]: %s\n", c.number, evt.Code)
 			} else {
-				fmt.Println("Login event:", evt.Event)
+				fmt.Printf("Login event [%s]: %s\n", c.number, evt.Event)
 			}
 		}
 	} else {
@@ -88,8 +107,43 @@ func (c *Client) Connect(ctx context.Context) error {
 			return err
 		}
 	}
-
 	return nil
+}
+
+// reconnectLoop reconnects the device after an unexpected disconnect, retrying
+// every reconnectInterval while ctx is alive. It returns on the first
+// successful connect or when ctx or the send worker is stopped, so shutdown
+// never leaks reconnect goroutines.
+func (c *Client) reconnectLoop(ctx context.Context) {
+	select {
+	case c.reconnectGate <- struct{}{}:
+		defer func() { <-c.reconnectGate }()
+	case <-ctx.Done():
+		return
+	case <-c.workerCtx.Done():
+		return
+	}
+	ticker := time.NewTicker(reconnectInterval)
+	defer ticker.Stop()
+	for {
+		err := c.connect(ctx)
+		switch {
+		case err == nil:
+			return
+		case errors.Is(err, whatsmeow.ErrAlreadyConnected):
+			// whatsmeow reconnected before us, nothing left to do.
+			return
+		default:
+			c.logger.Printf("whatsmeow: reconnect device %s: %v", c.number, err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.workerCtx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *Client) Disconnect() {

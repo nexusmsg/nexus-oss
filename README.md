@@ -46,8 +46,9 @@ npm run dev
 
 The worker lives in `services/worker/`. It receives WhatsMeow message events,
 maps them into WhatsApp Business API-shaped webhook payloads, logs the final
-JSON, and forwards them to a configured HTTP endpoint. It also runs a legacy
-local Echo Direct Send endpoint (being replaced by `services/api`).
+JSON, and forwards them to the webhook endpoint resolved from the internal API.
+It consumes outbound message jobs from the Supabase `jobs` queue and sends
+them through the WhatsApp device registered for each job's phone number.
 
 Run from `services/worker/`:
 
@@ -59,12 +60,16 @@ Worker configuration (env):
 
 ```text
 BUSINESS_ACCOUNT_ID
-PHONE_NUMBER_ID
-DISPLAY_PHONE_NUMBER
-WEBHOOK_URL
-WEBHOOK_SECRET
-API_AUTH_TOKEN
-PORT
+SUPABASE_DSN
+WHATSMEOW_STORE_DSN
+MIGRATIONS_DIR
+POLL_INTERVAL
+MAX_ATTEMPTS
+API_URL
+INTERNAL_TOKEN
+WEBHOOK_CONFIG_TTL
+WABA_DEVICES — comma-separated phone_number_id:number pairs,
+  e.g. WABA_DEVICES=1001:628123456789,1002:628987654321
 ```
 
 Details, mapping rules, and handoff notes: `services/worker/HANDOFF.md`,

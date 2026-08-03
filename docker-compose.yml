@@ -75,17 +75,14 @@ services:
       SUPABASE_DSN: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
       WHATSMEOW_STORE_DSN: ""
       MIGRATIONS_DIR: /app/migrations
-      POLL_INTERVAL: 1s
+      POLL_INTERVAL: "1s"
       API_URL: http://api:3000
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       MAX_ATTEMPTS: "3"
-      WABA_DEVICES: ${WABA_DEVICES:-}
+      WEBHOOK_CONFIG_TTL: "30s"
       BUSINESS_ACCOUNT_ID: ${BUSINESS_ACCOUNT_ID:-}
-      PHONE_NUMBER_ID: ${PHONE_NUMBER_ID:-}
-      DISPLAY_PHONE_NUMBER: ${DISPLAY_PHONE_NUMBER:-}
-      WEBHOOK_URL: ${WEBHOOK_URL:-}
-      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
-      PORT: "8080"
+      # format: phone_number_id:number pairs, comma-separated, e.g. 1001:628123456789,1002:628987654321
+      WABA_DEVICES: ${WABA_DEVICES:-}
     depends_on:
       postgres:
         condition: service_healthy

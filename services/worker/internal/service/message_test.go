@@ -4,27 +4,32 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 )
 
-type recordingForwarder struct {
-	called  bool
-	payload domain.WebhookPayload
+type fakeWebhookConfigProvider struct {
+	config domain.WebhookConfig
+	err    error
 }
 
-func (f *recordingForwarder) Forward(_ context.Context, payload domain.WebhookPayload) error {
-	f.called = true
-	f.payload = payload
-	return nil
+func (p *fakeWebhookConfigProvider) Get(_ context.Context, _ string) (domain.WebhookConfig, error) {
+	return p.config, p.err
 }
+
+const payloadLogPrefix = "inbound WABA webhook payload: "
 
 func TestMessageInboundLogsWABAPayload(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0), nil)
+	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{})
 
 	err := svc.Inbound(context.Background(), &domain.InboundEvent{
 		BusinessAccountID:  "business-123",
@@ -44,14 +49,13 @@ func TestMessageInboundLogsWABAPayload(t *testing.T) {
 		t.Fatalf("Inbound() error = %v", err)
 	}
 
-	const prefix = "inbound WABA webhook payload: "
-	line := strings.TrimSpace(output.String())
-	if !strings.HasPrefix(line, prefix) {
-		t.Fatalf("log = %q, want prefix %q", line, prefix)
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], payloadLogPrefix) {
+		t.Fatalf("first log line = %q, want prefix %q", lines[0], payloadLogPrefix)
 	}
 
 	var payload domain.WebhookPayload
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(line, prefix)), &payload); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[0], payloadLogPrefix)), &payload); err != nil {
 		t.Fatalf("decode logged payload: %v", err)
 	}
 	if payload.Object != "whatsapp_business_account" {
@@ -68,7 +72,7 @@ func TestMessageInboundLogsWABAPayload(t *testing.T) {
 
 func TestMessageInboundIgnoresSelfSentMessage(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0), nil)
+	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{err: errors.New("must not be called")})
 
 	err := svc.Inbound(context.Background(), &domain.InboundEvent{IsFromMe: true})
 	if err != nil {
@@ -80,8 +84,18 @@ func TestMessageInboundIgnoresSelfSentMessage(t *testing.T) {
 }
 
 func TestMessageInboundForwardsPayload(t *testing.T) {
-	forwarder := &recordingForwarder{}
-	svc := NewMessage(log.Default(), forwarder)
+	var receivedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		receivedBody = body
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: domain.WebhookConfig{URL: server.URL}})
 
 	err := svc.Inbound(context.Background(), &domain.InboundEvent{
 		BusinessAccountID: "business-123",
@@ -93,11 +107,37 @@ func TestMessageInboundForwardsPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inbound() error = %v", err)
 	}
-	if !forwarder.called {
-		t.Fatal("forwarder was not called")
+
+	var payload domain.WebhookPayload
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("decode forwarded payload: %v", err)
 	}
-	if forwarder.payload.Entry[0].ID != "business-123" {
-		t.Errorf("entry ID = %q", forwarder.payload.Entry[0].ID)
+	if payload.Entry[0].ID != "business-123" {
+		t.Errorf("entry ID = %q", payload.Entry[0].ID)
+	}
+}
+
+func TestMessageInboundRetriesTransientForwardFailure(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) < webhookForwardAttempts {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: domain.WebhookConfig{URL: server.URL}})
+
+	err := svc.Inbound(context.Background(), &domain.InboundEvent{
+		Message: domain.MessageEvent{Type: domain.MessageEventTypeText, Text: "hello"},
+	})
+	if err != nil {
+		t.Fatalf("Inbound() error = %v", err)
+	}
+	if hits.Load() != webhookForwardAttempts {
+		t.Errorf("forward attempts = %d, want %d", hits.Load(), webhookForwardAttempts)
 	}
 }
 
@@ -105,6 +145,34 @@ func TestMessageInboundRejectsNilEvent(t *testing.T) {
 	svc := NewMessage(log.Default(), nil)
 	if err := svc.Inbound(context.Background(), nil); err == nil {
 		t.Fatal("Inbound(nil) returned nil error")
+	}
+}
+
+func TestMessageInboundSurfacesProviderError(t *testing.T) {
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{err: errors.New("provider boom")})
+
+	err := svc.Inbound(context.Background(), &domain.InboundEvent{
+		PhoneNumberID: "phone-123",
+		Message:       domain.MessageEvent{Type: domain.MessageEventTypeText, Text: "hello"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolve webhook config") {
+		t.Fatalf("Inbound() error = %v, want wrapped provider error", err)
+	}
+}
+
+func TestMessageInboundSkipsForwardWhenNotConfigured(t *testing.T) {
+	var output bytes.Buffer
+	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{})
+
+	err := svc.Inbound(context.Background(), &domain.InboundEvent{
+		PhoneNumberID: "phone-123",
+		Message:       domain.MessageEvent{Type: domain.MessageEventTypeText, Text: "hello"},
+	})
+	if err != nil {
+		t.Fatalf("Inbound() error = %v", err)
+	}
+	if !strings.Contains(output.String(), "webhook not configured") {
+		t.Fatalf("log = %q, want webhook-not-configured message", output.String())
 	}
 }
 
@@ -241,16 +309,15 @@ func TestMessageInboundLogsTypedPayloads(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var output bytes.Buffer
-			svc := NewMessage(log.New(&output, "", 0), nil)
+			svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{})
 			err := svc.Inbound(context.Background(), &domain.InboundEvent{Message: tt.event})
 			if err != nil {
 				t.Fatalf("Inbound() error = %v", err)
 			}
 
-			line := strings.TrimSpace(output.String())
-			const prefix = "inbound WABA webhook payload: "
+			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
 			var payload domain.WebhookPayload
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, prefix)), &payload); err != nil {
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[0], payloadLogPrefix)), &payload); err != nil {
 				t.Fatalf("decode logged payload: %v", err)
 			}
 			tt.check(t, payload.Entry[0].Changes[0].Value.Messages[0])

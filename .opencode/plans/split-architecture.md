@@ -381,8 +381,12 @@ it. Two options:
    Stack runs with `docker compose up --build`.
 4. **M4 — services/api:** enqueue + synchronous result wait + auth + internal
    webhook-config API; API tests (Hono + Vitest).
-5. **M5 — services/worker:** `ClientRegistry` (multi-device) + queue consumer +
-   outbound executor + inbound config provider/forwarding; Go tests.
+5. **M5 — services/worker (Completed):** `ClientRegistry` (multi-device, keyed
+   by `phone_number_id`, QR/reconnect per device) + queue consumer (pgx,
+   `FOR UPDATE SKIP LOCKED`, exponential backoff) + outbound executor
+   (`result.wa_message_id` contract) + inbound webhook-config provider
+   (`apiconfig`, TTL cache); Echo adapter removed; `WABA_DEVICES`
+   `phone_number_id:number` pairs.
 6. **M6 — Integration + cleanup:** remove Echo adapter remnants, end-to-end
    run in the compose stack, update `README.md`, `HANDOFF.md`, and this plan;
    `gofmt`/`go test ./...`/`go vet ./...` + API test run.
@@ -424,3 +428,5 @@ it. Two options:
 | 2026-08-03 | M4 | `docker compose build api` | API image rebuilds OK with /supabase-js |
 | 2026-08-03 | M4 | hexagonal refactor: domain/ports/service/adapters | tsc clean; 51 tests pass (http 31, send 8, webhook 2, transport 10); no framework imports below adapters |
 | 2026-08-03 | M4.5 | Vercel compat: `hono/vercel` handle + api/ entry + compose.ts split | tsc clean; 51 tests; local server 200; api/index.ts imports clean (no listener); docker compose build api OK |
+| 2026-08-04 | M5 | `go test ./...`, `go vet ./...`, `CGO_ENABLED=0 go build ./...` (services/worker) | 58 tests, 10 packages; vet clean; build OK (multi-device registry + queue consumer + executor + apiconfig; Echo adapter removed, echo deps dropped) |
+| 2026-08-04 | M5 | queue store integration test vs compose postgres (:5433) | 4 passed: Claim/Complete/RetryLater/Fail, result JSON contains wa_message_id, self-cleaning |

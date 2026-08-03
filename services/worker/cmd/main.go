@@ -2,19 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log"
-	"net/http"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/adapters/httpapi"
-	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/apiconfig"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/queue"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/whatsmeow"
 	"github.com/afikrim/waba-api-unofficial/internal/config"
-	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/afikrim/waba-api-unofficial/internal/service"
 	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -23,10 +18,17 @@ import (
 func main() {
 	log.Println("waba-api-unofficial — unofficial WABA webhook event replicator")
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	if len(cfg.Devices) == 0 {
+		log.Println("warning: no devices configured (WABA_DEVICES empty)")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
 	storeDSN := cfg.StoreDSN
 	if storeDSN == "" {
 		storeDSN = cfg.SupabaseDSN
@@ -40,51 +42,53 @@ func main() {
 	}
 	defer container.Close()
 
-	waClient, err := whatsmeow.NewClient(ctx, container)
+	if cfg.SupabaseDSN == "" {
+		log.Fatal("SUPABASE_DSN must be set to the jobs Postgres DSN")
+	}
+	store, err := queue.NewStore(ctx, cfg.SupabaseDSN, log.Default())
 	if err != nil {
-		log.Fatalf("initialize whatsapp client: %v", err)
+		log.Fatalf("initialize queue store: %v", err)
 	}
-	var forwarder ports.WebhookForwarder
-	if cfg.Webhook.URL != "" {
-		forwarder = webhook.NewClient(cfg.Webhook.URL, cfg.Webhook.Secret)
-	} else {
-		log.Println("WEBHOOK_URL is empty; webhook forwarding is disabled")
+	defer store.Close()
+
+	provider := apiconfig.NewClient(cfg.APIURL, cfg.InternalToken, cfg.WebhookConfigTTL, log.Default())
+	svc := service.NewMessage(log.Default(), provider)
+
+	specs := make([]whatsmeow.DeviceSpec, 0, len(cfg.Devices))
+	for _, device := range cfg.Devices {
+		specs = append(specs, whatsmeow.DeviceSpec{
+			PhoneNumberID: device.PhoneNumberID,
+			Number:        device.Number,
+			DisplayPhone:  device.DisplayPhone,
+		})
 	}
-	svc := service.NewMessage(log.Default(), forwarder)
-	outboundService := service.NewOutbound(waClient)
-	eventHandler := whatsmeow.NewHandler(
-		svc,
-		cfg.Webhook.BusinessAccountID,
-		cfg.Webhook.PhoneNumberID,
-		cfg.Webhook.DisplayPhoneNumber,
-		log.Default(),
-	)
-
-	waClient.AddEventHandler(eventHandler.Handle(ctx))
-
-	if err := waClient.Connect(ctx); err != nil {
-		log.Fatalf("connect whatsapp: %v", err)
+	registry, err := whatsmeow.NewRegistry(ctx, container, specs, svc, cfg.BusinessAccountID, log.Default())
+	if err != nil {
+		log.Fatalf("initialize whatsapp registry: %v", err)
 	}
-	defer waClient.Disconnect()
 
-	apiServer := httpapi.NewServer(outboundService, cfg.Webhook.PhoneNumberID, cfg.APIAuthToken)
-	serverErr := make(chan error, 1)
+	executor := service.NewJobExecutor(registry)
+	consumer := queue.NewConsumer(store, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
+
+	consumerErr := make(chan error, 1)
 	go func() {
-		serverErr <- apiServer.Start(fmt.Sprintf(":%d", cfg.Port))
+		consumerErr <- consumer.Run(ctx)
 	}()
 
+	// Partial device failures must not kill the worker; the registry keeps the
+	// remaining devices connected and retries the failed ones via its
+	// Disconnected handler.
+	if err := registry.Connect(ctx); err != nil {
+		log.Printf("whatsmeow: connect: %v (continuing with connected devices)", err)
+	}
+	defer registry.DisconnectAll()
+
 	select {
-	case err := <-serverErr:
-		if !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("http server stopped: %v", err)
+	case err := <-consumerErr:
+		if err != nil {
+			log.Printf("queue consumer stopped: %v", err)
 		}
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := apiServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("shutdown http server: %v", err)
-		}
+		log.Println("shutting down")
 	}
-
-	log.Println("shutting down")
 }

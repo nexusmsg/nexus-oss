@@ -43,22 +43,32 @@ Root commands: `npm install`, then `npm run dev` / `npm run build` /
 
 ## Current Status
 
+The worker now runs the M5 architecture:
 
-The project receives WhatsMeow message events, maps supported event types into
-WhatsApp Business API-shaped webhook payloads, logs the final JSON payload, and
-forwards it to a configured HTTP endpoint.
+- **Multi-device WhatsMeow registry** keyed by `phone_number_id`; each device
+  owns a bounded outbound send queue and its own QR/reconnect loop.
+- **Queue consumer** (pgx): polls `jobs`, claims with `FOR UPDATE SKIP LOCKED`,
+  completes with `result: {"wa_message_id": "<real wamid>"}`, retries with
+  exponential backoff, fails after max attempts.
+- **Outbound executor** (service layer): claimed job → sender for the job's
+  `phone_number_id` → validate → `ports.MessageSender` → real wamid.
+- **Webhook config provider** (`apiconfig`): before forwarding an inbound
+  event, fetches `GET {API_URL}/internal/webhook-config?phone_number_id=...`
+  (Bearer `INTERNAL_TOKEN`, per-ID TTL cache); payloads are forwarded with the
+  returned secret (HMAC) and a bounded non-2xx retry.
+- The legacy Echo HTTP adapter (`internal/adapters/httpapi/`) was **removed**
+  along with `PORT`/`API_AUTH_TOKEN` worker config — the API owns the HTTP
+  surface now.
 
-Latest relevant commit:
+Latest commit: M5 (see the verification log in
+`../../.opencode/plans/split-architecture.md`).
+
+Verification at this handoff:
 
 ```text
-d5cbc2e feat: add Direct Send HTTP API
-```
-
-Verification at previous handoff:
-
-```text
-go test ./...   25 passed
+go test ./...   58 passed (10 packages)
 go vet ./...   passed
+CGO_ENABLED=0 go build ./...   passed
 ```
 
 ## API Surface (M4, for M5 worker wiring)
@@ -76,22 +86,25 @@ Env: `PORT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `API_AUTH_TOKEN`, `INT
 
 ```text
 WhatsMeow event
-  -> internal/adapters/whatsmeow/handler.go
+  -> internal/adapters/whatsmeow/handler.go (per-device)
   -> domain.InboundEvent
   -> internal/service/message.go
   -> WABA payload construction
   -> payload log
-  -> ports.WebhookForwarder
-  -> internal/adapters/webhook/client.go
-  -> configured HTTP endpoint
+  -> ports.WebhookConfigProvider (apiconfig, TTL cache)
+     GET {API_URL}/internal/webhook-config?phone_number_id=...
+  -> internal/adapters/webhook/client.go (HMAC with returned secret,
+     bounded non-2xx retry)
+  -> customer webhook endpoint
 
-HTTP Direct Send request
-  -> internal/adapters/httpapi/server.go
-  -> internal/service/outbound.go
-  -> ports.MessageSender
-  -> bounded outbound channel
-  -> existing WhatsMeow client
-  -> WABA-shaped HTTP response
+Outbound job
+  API POST /:phone_number_id/messages -> jobs row (pending)
+  -> internal/adapters/queue consumer (Claim, FOR UPDATE SKIP LOCKED)
+  -> internal/service/executor.go: unmarshal payload -> validate
+  -> whatsmeow.Registry.Sender(phone_number_id) -> per-device bounded
+     send queue -> whatsmeow.SendMessage
+  -> Complete with result: {"wa_message_id": "<real wamid>"}
+  -> API polls result and returns the official WABA 200 envelope
 ```
 
 ## Implemented Behavior
@@ -102,23 +115,28 @@ HTTP Direct Send request
 - Supported mappings currently include conversation text, extended text,
   location, reaction, button reply, list reply, and message context.
 - Self-sent messages (`IsFromMe`) are ignored.
-- WABA payload metadata comes from `BUSINESS_ACCOUNT_ID`, `PHONE_NUMBER_ID`,
-  and `DISPLAY_PHONE_NUMBER`.
+- WABA payload metadata comes from `BUSINESS_ACCOUNT_ID` (global) and per-device
+  `phone_number_id` + display number from `WABA_DEVICES`.
 - The service logs the final JSON payload before forwarding it.
 - Forwarding uses HTTP POST with `Content-Type: application/json`.
-- Optional `WEBHOOK_SECRET` produces `X-Hub-Signature-256` using HMAC-SHA256
+- The webhook URL/secret come from the API (`apiconfig` provider, per-ID TTL
+  cache, default 30s); the secret produces `X-Hub-Signature-256` HMAC-SHA256
   over the exact JSON request body.
-- Non-2xx responses are returned as errors.
+- Non-2xx responses are returned as errors and retried (3 attempts, short
+  backoff).
 - Requests use a 15-second HTTP client timeout and propagate the inbound
   context.
-- Empty `WEBHOOK_URL` disables forwarding while payload logging continues.
-- Shutdown uses `signal.NotifyContext` so active operations can be canceled.
-- Echo v4 serves `POST /<PHONE_NUMBER_ID>/messages` on `PORT` (default `8080`).
-- Text Direct Send requests are validated and dispatched through one long-lived
-  WhatsMeow connection.
-- The outbound queue is bounded to 32 commands and uses one worker.
-- `API_AUTH_TOKEN` optionally enables bearer-token validation for Direct Send.
-- Direct Send errors use a WABA-shaped `error` envelope.
+- Empty `webhook_url` from the API config disables forwarding while payload
+  logging continues.
+- Shutdown uses `signal.NotifyContext`: the poll loop stops, per-device send
+  queues are drained, and every WhatsMeow client disconnects.
+- Multi-device: one `whatsmeow.Client` per `phone_number_id` (`Registry`),
+  each with its own bounded outbound queue (32) and worker goroutine; QR
+  login and reconnect (bounded backoff) are handled per device.
+- Outbound jobs are claimed from Postgres with `FOR UPDATE SKIP LOCKED`,
+  executed through the per-device queue, completed with the real wamid in
+  `result.wa_message_id`, retried with exponential backoff, and failed after
+  `max_attempts`.
 
 ## Configuration
 
@@ -126,13 +144,14 @@ Set these environment variables before running:
 
 ```bash
 BUSINESS_ACCOUNT_ID="your-business-account-id"
-PHONE_NUMBER_ID="your-phone-number-id"
-DISPLAY_PHONE_NUMBER="+628123456789"
-WEBHOOK_URL="http://localhost:8080/webhook"
-WEBHOOK_SECRET="optional-secret"
-API_AUTH_TOKEN="optional-token"
-PORT="8080"
-SUPABASE_DSN="postgresql://user:pass@host:5432/db"
+WABA_DEVICES="1001:628123456789,1002:628987654321"   # phone_number_id:number pairs
+API_URL="http://localhost:3000"
+INTERNAL_TOKEN="matches-api-INTERNAL_TOKEN"
+POLL_INTERVAL="1s"          # queue poll interval (default 1s)
+MAX_ATTEMPTS="3"            # retry ceiling (default 3)
+WEBHOOK_CONFIG_TTL="30s"    # webhook-config cache TTL (default 30s)
+SUPABASE_DSN="postgresql://user:pass@host:5432/waba?sslmode=disable"  # jobs DB
+WHATSMEOW_STORE_DSN="postgresql://user:pass@host:5432/waba?sslmode=disable"  # device store (falls back to SUPABASE_DSN)
 MIGRATIONS_DIR="../../shared/db/migrations"
 ```
 
@@ -142,22 +161,32 @@ Run the application with:
 go run ./cmd
 ```
 
-`PORT` is used by the local Direct Send HTTP server. If `WEBHOOK_URL` is also
-configured, use a separate port for the receiving webhook application; the
-local Direct Send server does not expose `/webhook`.
+`WABA_DEVICES` is a comma-separated list of `phone_number_id:number` pairs; the
+display phone defaults to the number. Malformed entries fail startup. The
+worker no longer reads `PORT`, `API_AUTH_TOKEN`, `PHONE_NUMBER_ID`,
+`DISPLAY_PHONE_NUMBER`, `WEBHOOK_URL`, or `WEBHOOK_SECRET` — webhook
+destinations now come from the API's internal webhook-config endpoint.
 
 ## Important Decisions
 
 - WhatsMeow-specific types stay inside the WhatsMeow adapter.
 - WABA payload construction stays in the service layer.
-- `WebhookForwarder` is a port and the HTTP client is its adapter.
-- `MessageSender` is a port and the WhatsMeow adapter implements it with a
-  channel-backed single-client worker.
+- `WebhookForwarder` is a port and the HTTP client is its adapter; the message
+  service resolves the destination per event via `WebhookConfigProvider`
+  instead of static config.
+- `MessageSender` is a port and each WhatsMeow `Client` implements it with a
+  channel-backed per-device worker; `Registry` resolves senders by
+  `phone_number_id` and implements `OutboundSenderProvider`.
+- `JobStore` (pgx, SKIP LOCKED) and `JobHandler` (service executor) keep the
+  consumer loop decoupled from business logic; retry/backoff policy lives in
+  the consumer.
 - Domain types do not import WhatsMeow or HTTP packages.
 - Payload fields that cannot be reconstructed are omitted rather than
   invented.
 - `entry[].id` comes from `BUSINESS_ACCOUNT_ID`; it cannot be derived from a
   normal WhatsApp sender number.
+- `config` stays dependency-free: `WABA_DEVICES` parses into `config.Device`;
+  `cmd/main.go` maps it to `whatsmeow.DeviceSpec`.
 
 ## Deferred Work
 
@@ -181,14 +210,21 @@ Do not invent schemas or media IDs for these types without first updating
 - `docs/api-mapping-webhook.md`: source mapping specification.
 - `../../.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
 - `internal/adapters/whatsmeow/handler.go`: raw WhatsMeow event translation.
-- `internal/adapters/whatsmeow/client.go`: WhatsMeow lifecycle and quiet logger.
-- `internal/service/message.go`: WABA payload mapping, logging, and forwarding.
+- `internal/adapters/whatsmeow/client.go`: per-device WhatsMeow lifecycle, send
+  queue, and reconnect loop.
+- `internal/adapters/whatsmeow/registry.go`: multi-device registry keyed by
+  `phone_number_id` (implements `ports.OutboundSenderProvider`).
+- `internal/service/message.go`: WABA payload mapping, logging, and forwarding
+  via the webhook-config provider.
+- `internal/service/executor.go`: outbound job executor (`ports.JobHandler`).
 - `internal/adapters/webhook/client.go`: HTTP, HMAC, timeout, and response handling.
-- `internal/core/domain/`: internal event and payload models.
-- `internal/core/ports/`: service contracts.
+- `internal/adapters/queue/`: pgx `JobStore` (SKIP LOCKED) + poll consumer.
+- `internal/adapters/apiconfig/client.go`: webhook-config provider (TTL cache).
+- `internal/core/domain/`: internal event, payload, and job models.
+- `internal/core/ports/`: service contracts (sender, job store/handler, webhook
+  config provider).
 - `cmd/main.go`: dependency composition and shutdown lifecycle.
-- `internal/adapters/httpapi/server.go`: Echo v4 Direct Send server.
-- `internal/service/outbound.go`: Direct Send validation and response mapping.
+- `internal/service/outbound.go`: outbound validation (reused by the executor).
 - `cmd/migrate/main.go`: golang-migrate migration runner (`SUPABASE_DSN`).
 - `../../shared/db/migrations/`: Supabase schema migrations (golang-migrate).
 
@@ -235,46 +271,11 @@ git diff --check    passed
 A manual Direct Send smoke test was completed successfully for recipient
 `6285293322073` using the text request documented in `../../README.md`.
 
-## Direct Send API Status
+## Direct Send (Removed in M5)
 
-The application now also exposes a local Echo v4 HTTP server that mirrors the
-WABA Direct Send route:
-
-```text
-POST /<PHONE_NUMBER_ID>/messages
-```
-
-The request body follows the WABA JSON shape. The current supported outbound
-message is a text message with `messaging_product` set to `whatsapp`, a `to`
-phone number, `type` set to `text`, a non-empty `text.body`, and an optional
-`category` of `utility`, `authentication`, or `service`.
-
-The HTTP request is passed to an outbound service, then to a bounded channel
-owned by `internal/adapters/whatsmeow/client.go`. A single worker calls the
-already-connected `whatsmeow.Client.SendMessage`; no new WhatsMeow connection
-is created per request. Request cancellation is checked before dispatch and
-while waiting for a response. Shutdown stops HTTP intake before the WhatsMeow
-client is disconnected.
-
-`API_AUTH_TOKEN` enables optional `Authorization: Bearer ...` validation. The
-server uses `PORT` (default `8080`). Invalid requests use a WABA-shaped error
-envelope. Queue capacity is currently fixed at 32 commands.
-
-## Direct Send Deferred Work
-
-- Full authentication-category message payloads and access restrictions.
-- Template, CTA URL, reply, and mixed-button message mappings.
-- TTL validation and delivery semantics.
-- Media, contacts, poll, and native-flow outbound mappings.
-- Configurable queue capacity and explicit queue-full response behavior.
-- Production-grade authentication/token rotation.
-
-## Direct Send Relevant Files
-
-- `../../.opencode/plans/waba-direct-send.md`: implementation plan and boundary.
-- `internal/core/domain/outbound.go`: outbound WABA request/response models.
-- `internal/core/ports/message_sender.go`: outbound contracts.
-- `internal/service/outbound.go`: validation and response mapping.
-- `internal/adapters/httpapi/server.go`: Echo v4 HTTP API.
-- `internal/adapters/whatsmeow/client.go`: channel-backed single-client dispatch.
-- `cmd/main.go`: HTTP/WhatsMeow composition and shutdown ordering.
+The legacy Echo v4 HTTP adapter (`internal/adapters/httpapi/`) was removed in
+M5; the HTTP surface now lives in `services/api`. Worker outbound handling is
+queue-driven: the API enqueues a `send_message` job and the worker consumes it
+via `internal/adapters/queue` → `internal/service/executor.go` → the per-device
+WhatsMeow sender. Validation lives in `internal/service/outbound.go`
+(`validateOutboundMessage`, reused by the executor).

@@ -5,23 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
 type Message struct {
-	logger    *log.Logger
-	forwarder ports.WebhookForwarder
+	logger   *log.Logger
+	provider ports.WebhookConfigProvider
 }
 
 var _ ports.MessageService = (*Message)(nil)
 
-func NewMessage(logger *log.Logger, forwarder ports.WebhookForwarder) *Message {
+func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider) *Message {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Message{logger: logger, forwarder: forwarder}
+	return &Message{logger: logger, provider: provider}
 }
 
 func (s *Message) Inbound(ctx context.Context, event *domain.InboundEvent) error {
@@ -59,12 +61,47 @@ func (s *Message) Inbound(ctx context.Context, event *domain.InboundEvent) error
 		return fmt.Errorf("marshal inbound WABA payload: %w", err)
 	}
 	s.logger.Printf("inbound WABA webhook payload: %s", encoded)
-	if s.forwarder != nil {
-		if err := s.forwarder.Forward(ctx, payload); err != nil {
-			return fmt.Errorf("forward inbound WABA webhook: %w", err)
-		}
+
+	if s.provider == nil {
+		return fmt.Errorf("webhook config provider is nil")
+	}
+	cfg, err := s.provider.Get(ctx, event.PhoneNumberID)
+	if err != nil {
+		return fmt.Errorf("resolve webhook config for phone number %q: %w", event.PhoneNumberID, err)
+	}
+	if cfg.URL == "" {
+		s.logger.Printf("webhook not configured for phone number %q; skipping forward", event.PhoneNumberID)
+		return nil
+	}
+	if err := forwardWebhookWithRetry(ctx, cfg, payload); err != nil {
+		return fmt.Errorf("forward inbound WABA webhook: %w", err)
 	}
 	return nil
+}
+
+const webhookForwardAttempts = 3
+
+var webhookForwardBackoffs = []time.Duration{200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond}
+
+// forwardWebhookWithRetry forwards the payload through a per-call webhook
+// client, retrying transient failures with bounded exponential backoff.
+func forwardWebhookWithRetry(ctx context.Context, cfg domain.WebhookConfig, payload domain.WebhookPayload) error {
+	client := webhook.NewClient(cfg.URL, cfg.Secret)
+	var lastErr error
+	for attempt := 0; attempt < webhookForwardAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(webhookForwardBackoffs[attempt-1]):
+			}
+		}
+		lastErr = client.Forward(ctx, payload)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 func mapMessage(message domain.MessageEvent) domain.Message {

@@ -32,7 +32,10 @@ func run(direction string, steps int) error {
 		return fmt.Errorf("invalid -direction %q: must be one of up, down, version", direction)
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	absDir, err := filepath.Abs(cfg.MigrationsDir)
 	if err != nil {
 		return fmt.Errorf("resolve migrations dir: %w", err)
