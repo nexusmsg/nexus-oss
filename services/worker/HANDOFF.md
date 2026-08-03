@@ -61,6 +61,17 @@ go test ./...   25 passed
 go vet ./...   passed
 ```
 
+## API Surface (M4, for M5 worker wiring)
+
+`services/api` now exposes the two endpoints the worker consumes/produces:
+
+- `POST /:phone_number_id/messages` — bearer auth (`API_AUTH_TOKEN`), WABA validation (mirrors `service/outbound.go`), optional idempotency key (header wins over body), enqueues a `send_message` job, polls the job row until `SEND_TIMEOUT_MS` (default 25000) every `RESULT_POLL_MS` (default 250), returns the official WABA 200 envelope with the real `wamid` from `result.wa_message_id`, or a WABA error envelope (504 on timeout).
+- `GET /internal/webhook-config?phone_number_id=...` — bearer auth (`INTERNAL_TOKEN`), returns `{ webhook_url, webhook_secret }` (secret null-able); 404 when absent.
+
+Env: `PORT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `API_AUTH_TOKEN`, `INTERNAL_TOKEN`, `SEND_TIMEOUT_MS`, `RESULT_POLL_MS`.
+
+**M5 contract:** the queue consumer must complete succeeded jobs with `result: { "wa_message_id": "<real wamid>" }` (the API reads this exact key). Source: `services/api/src/{app,transport,config}.ts`.
+
 ## Runtime Flow
 
 ```text

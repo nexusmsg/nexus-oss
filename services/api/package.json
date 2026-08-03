@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "hono": "^4",
-    "@hono/node-server": "^1"
+    "@hono/node-server": "^1",
+    "@supabase/supabase-js": "^2.112.0"
   },
   "devDependencies": {
     "typescript": "^5",

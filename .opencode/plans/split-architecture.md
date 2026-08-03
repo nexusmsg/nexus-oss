@@ -417,3 +417,5 @@ it. Two options:
 | 2026-08-03 | M2 | `cmd/migrate` against postgres:16 container | up→v2, idempotent "no change", down→v1, up→v2 |
 | 2026-08-03 | M3 | `CGO_ENABLED=0 go build ./...` (services/worker) | CGO-free build OK (lib/pq store switch) |
 | 2026-08-03 | M3 | `docker compose up --build -d` + curl checks | postgres healthy, migrate→v2, postgrest 200, api `{"ok":true}`; worker up + QR linking. Fixes during verify: postgres host port 5433 (5432 taken), `?sslmode=disable` in DSNs, PGRST_JWT_SECRET >=32 bytes |
+| 2026-08-03 | M4 | `npm run build` + `npm run test` --workspace /api | tsc clean; 39 tests pass (app 29, transport 10) |
+| 2026-08-03 | M4 | `docker compose build api` | API image rebuilds OK with /supabase-js |
