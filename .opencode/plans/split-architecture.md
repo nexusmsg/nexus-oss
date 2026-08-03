@@ -402,8 +402,11 @@ it. Two options:
 
 ## Open Items
 
-- Vercel deployment target — if the API runs on Vercel serverless, sync-wait
-  may hit function duration limits (async mode as fallback).
+- ~~Vercel deployment target~~ **Resolved (M4.5):** API is Vercel-deployable via the
+  `api/` directory pattern (`api/index.ts` + `hono/vercel` `handle`, `runtime: nodejs`,
+  `maxDuration: 30`); `vercel.json` pins the function config; split
+  `src/compose.ts` (side-effect-free) / `src/index.ts` (local serve) / `api/index.ts`
+  (Vercel handler). Sync-wait 25s fits Hobby/Pro (Fluid compute default 300s).
 - Webhook config management surface (CRUD API/UI in `apps/` later).
 - Device provisioning flow (registering phone numbers, QR login lifecycle,
   reconnection policy).
@@ -420,3 +423,4 @@ it. Two options:
 | 2026-08-03 | M4 | `npm run build` + `npm run test` --workspace /api | tsc clean; 39 tests pass (app 29, transport 10) |
 | 2026-08-03 | M4 | `docker compose build api` | API image rebuilds OK with /supabase-js |
 | 2026-08-03 | M4 | hexagonal refactor: domain/ports/service/adapters | tsc clean; 51 tests pass (http 31, send 8, webhook 2, transport 10); no framework imports below adapters |
+| 2026-08-03 | M4.5 | Vercel compat: `hono/vercel` handle + api/ entry + compose.ts split | tsc clean; 51 tests; local server 200; api/index.ts imports clean (no listener); docker compose build api OK |
