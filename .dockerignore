@@ -1,0 +1,17 @@
+# Build context is the repo root; keep the context lean.
+.git
+.opencode
+.slim
+node_modules
+**/node_modules
+.turbo
+**/.turbo
+**/dist
+services/worker/bin
+apps
+.env
+.env.local
+*.db
+*.sqlite
+*.sqlite3
+*.tsbuildinfo

@@ -301,6 +301,70 @@ Echo HTTP adapter removed.
   `INTERNAL_TOKEN`, `MAX_ATTEMPTS`, `WABA_DEVICES` + existing WhatsMeow/WABA
   env vars.
 
+### 4. Dev Environment (Docker Compose + Dockerfiles)
+
+Local dev/testing stack via Docker Compose. `docker-compose.yml` at the repo
+root. Both app images build from the **repo root context** (the worker image
+must bundle `shared/db/migrations/` for `cmd/migrate`).
+
+```text
+compose services
+  postgres   postgres:16-alpine, healthcheck pg_isready, volume, port 5432
+  postgrest  PostgREST emulating Supabase's REST layer for supabase-js
+  migrate    worker image, one-shot `cmd/migrate -direction up`
+  api        services/api image, PORT 3000, SUPABASE_URL -> postgrest
+  worker     services/worker image
+```
+
+#### postgres
+
+- `postgres:16-alpine`, `POSTGRES_DB=waba`, named volume for persistence,
+  port `5432` published for local tooling, `pg_isready` healthcheck.
+
+#### migrate (one-shot)
+
+- Built from the worker image; runs `/app/migrate -direction up` with
+  `SUPABASE_DSN` + `MIGRATIONS_DIR=/app/migrations`.
+- `api` and `worker` both `depends_on` it with `service_completed_successfully`,
+  and postgres with `service_healthy` — schema is applied before anything reads.
+
+#### worker image
+
+- Multi-stage: `golang:1.26` build stage → slim runtime.
+- Builds both binaries: `/app/worker` (cmd) and `/app/migrate` (cmd/migrate);
+  copies `shared/db/migrations/` to `/app/migrations`.
+- **Store decision (resolved):** the WhatsMeow device store moves from
+  SQLite (`mattn/go-sqlite3`) to Postgres (whatsmeow `sqlstore` "postgres"
+  dialect). This removes CGO, giving a `CGO_ENABLED=0` static binary, and
+  stores device sessions in the transport DB (`WHATSMEOW_STORE_DSN`, falls
+  back to `SUPABASE_DSN`).
+
+#### api image
+
+- Multi-stage: `node:22-alpine` build stage → runtime. Root-context copy of
+  `package.json` + `package-lock.json` + `turbo.json` + `services/api`, then
+  `npm ci`, `npm run build`, runtime stage with `dist/` + production deps,
+  `CMD ["node", "dist/index.js"]`.
+
+#### API DB access decision
+
+`supabase-js` is a PostgREST client; a bare Postgres container cannot serve
+it. Two options:
+
+- **Decision (resolved): option (a) PostgREST in compose.** Add
+  `postgrest/postgrest` with `PGRST_DB_URI`, `PGRST_DB_ANON_ROLE`,
+  `PGRST_JWT_SECRET` so the same `supabase-js` code runs locally and against
+  Supabase (RLS-ready). Local anon/service keys are dev placeholders; the
+  anon role is the superuser `postgres` for dev simplicity.
+
+#### compose wiring
+
+- `api` env: `PORT`, `SUPABASE_URL` (+ keys, per decision above), `API_AUTH_TOKEN`,
+  `INTERNAL_TOKEN`, `SEND_TIMEOUT_MS`.
+- `worker` env: `SUPABASE_DSN`, `MIGRATIONS_DIR=/app/migrations`, `POLL_INTERVAL`,
+  `API_URL=http://api:3000`, `INTERNAL_TOKEN`, `MAX_ATTEMPTS`, `WABA_DEVICES`,
+  WhatsMeow store DSN (per CGO decision), and the existing WABA webhook vars.
+
 ## Milestones
 
 1. **M1 — Monorepo restructure:** Turborepo root (`package.json`, `turbo.json`),
@@ -310,13 +374,18 @@ Echo HTTP adapter removed.
    (golang-migrate format) for `jobs` + `webhook_configs`; `cmd/migrate` in
    the worker (`SUPABASE_DSN`, `MIGRATIONS_DIR`, pgx5 driver). Verified against
    a throwaway postgres:16 container.
-3. **M3 — services/api:** enqueue + synchronous result wait + auth + internal
+3. **M3 — Dev environment (Docker Compose, Completed):** compose with
+   postgres + postgrest + one-shot migrate + dockerized `services/api` and
+   `services/worker`. Decisions resolved: WhatsMeow store → Postgres
+   (CGO-free image), API DB access → PostgREST for supabase-js parity.
+   Stack runs with `docker compose up --build`.
+4. **M4 — services/api:** enqueue + synchronous result wait + auth + internal
    webhook-config API; API tests (Hono + Vitest).
-4. **M4 — services/worker:** `ClientRegistry` (multi-device) + queue consumer +
+5. **M5 — services/worker:** `ClientRegistry` (multi-device) + queue consumer +
    outbound executor + inbound config provider/forwarding; Go tests.
-5. **M5 — Integration + cleanup:** remove Echo adapter remnants, end-to-end
-   local run (API + worker + Supabase), update `README.md`, `HANDOFF.md`, and
-   this plan; `gofmt`/`go test ./...`/`go vet ./...` + API test run.
+6. **M6 — Integration + cleanup:** remove Echo adapter remnants, end-to-end
+   run in the compose stack, update `README.md`, `HANDOFF.md`, and this plan;
+   `gofmt`/`go test ./...`/`go vet ./...` + API test run.
 
 ## Acceptance Criteria
 
@@ -346,3 +415,5 @@ Echo HTTP adapter removed.
 | 2026-08-03 | M1 | `npm run build`, `npm run test` (turbo); `go vet ./...` | 2/2 build, 2/2 test, vet clean |
 | 2026-08-03 | M2 | `go test ./...`, `go vet ./...` (services/worker) | 32 tests, 9 packages; vet clean |
 | 2026-08-03 | M2 | `cmd/migrate` against postgres:16 container | up→v2, idempotent "no change", down→v1, up→v2 |
+| 2026-08-03 | M3 | `CGO_ENABLED=0 go build ./...` (services/worker) | CGO-free build OK (lib/pq store switch) |
+| 2026-08-03 | M3 | `docker compose up --build -d` + curl checks | postgres healthy, migrate→v2, postgrest 200, api `{"ok":true}`; worker up + QR linking. Fixes during verify: postgres host port 5433 (5432 taken), `?sslmode=disable` in DSNs, PGRST_JWT_SECRET >=32 bytes |

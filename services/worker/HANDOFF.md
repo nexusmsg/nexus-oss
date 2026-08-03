@@ -31,6 +31,16 @@ Root commands: `npm install`, then `npm run dev` / `npm run build` /
 - Verified against a throwaway postgres:16 container: up → v2, idempotent,
   down 1 step → v1, up → v2.
 
+## Dev Environment (M3)
+
+- Full local stack via `docker-compose.yml` at the repo root.
+- Services: `postgres` (16-alpine, host port **5433** — 5432 is taken by the local nexus-postgres), `postgrest` (port 3001), one-shot `migrate` (worker image, `/app/migrate -direction up`), `api` (port 3000), `worker`.
+- Both app images build from the **repo root context**; worker image bundles `shared/db/migrations/` to `/app/migrations` and builds `CGO_ENABLED=0` binaries (`/app/worker`, `/app/migrate`).
+- Store: WhatsMeow device store is Postgres (`WHATSMEOW_STORE_DSN`, falls back to `SUPABASE_DSN`); `lib/pq` driver, no CGO.
+- Postgres DSNs in compose use `?sslmode=disable` (dev-only); PostgREST JWT secret default is >=32 bytes.
+- Copy `.env.example` to `.env` to override; the stack also runs with defaults.
+- Up: `docker compose up --build -d`. Verify: `curl localhost:3000/` returns `{"ok":true,"service":"api"}`, postgrest on 3001, `schema_migrations` version 2.
+
 ## Current Status
 
 

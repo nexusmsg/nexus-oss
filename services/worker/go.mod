@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/labstack/echo/v4 v4.15.0
-	github.com/mattn/go-sqlite3 v1.14.48
+	github.com/lib/pq v1.12.3
 	go.mau.fi/whatsmeow v0.0.0-20260730092514-662ad1dc6900
 	google.golang.org/protobuf v1.36.11
 )

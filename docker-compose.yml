@@ -1,0 +1,96 @@
+name: waba-api-unofficial
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: waba
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d waba"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgrest:
+    image: postgrest/postgrest
+    environment:
+      PGRST_DB_URI: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: postgres
+      PGRST_JWT_SECRET: ${PGRST_JWT_SECRET:-dev-jwt-secret-dev-only-0123456789abcdef}
+    ports:
+      - "3001:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    # The image ENTRYPOINT is /app/worker (the default command); reset it so this
+    # command runs the migration binary directly.
+    entrypoint: []
+    command: ["/app/migrate", "-direction", "up"]
+    environment:
+      SUPABASE_DSN: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
+      MIGRATIONS_DIR: /app/migrations
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      PORT: "3000"
+      SUPABASE_URL: http://postgrest:3000
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-anon-dev-key}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-service-dev-key}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgrest:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    environment:
+      SUPABASE_DSN: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
+      WHATSMEOW_STORE_DSN: ""
+      MIGRATIONS_DIR: /app/migrations
+      POLL_INTERVAL: 1s
+      API_URL: http://api:3000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      MAX_ATTEMPTS: "3"
+      WABA_DEVICES: ${WABA_DEVICES:-}
+      BUSINESS_ACCOUNT_ID: ${BUSINESS_ACCOUNT_ID:-}
+      PHONE_NUMBER_ID: ${PHONE_NUMBER_ID:-}
+      DISPLAY_PHONE_NUMBER: ${DISPLAY_PHONE_NUMBER:-}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

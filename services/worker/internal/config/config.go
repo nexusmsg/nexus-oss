@@ -18,6 +18,7 @@ type Config struct {
 	APIAuthToken  string
 	SupabaseDSN   string
 	MigrationsDir string
+	StoreDSN      string
 	Webhook       WebhookConfig
 }
 
@@ -27,6 +28,7 @@ func Load() *Config {
 		APIAuthToken:  getEnv("API_AUTH_TOKEN", ""),
 		SupabaseDSN:   getEnv("SUPABASE_DSN", ""),
 		MigrationsDir: getEnv("MIGRATIONS_DIR", "../../shared/db/migrations"),
+		StoreDSN:      getEnv("WHATSMEOW_STORE_DSN", ""),
 		Webhook: WebhookConfig{
 			URL:                getEnv("WEBHOOK_URL", ""),
 			Secret:             getEnv("WEBHOOK_SECRET", ""),

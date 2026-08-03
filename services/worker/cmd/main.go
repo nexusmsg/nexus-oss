@@ -16,7 +16,7 @@ import (
 	"github.com/afikrim/waba-api-unofficial/internal/config"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/afikrim/waba-api-unofficial/internal/service"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 )
 
@@ -27,7 +27,14 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	container, err := sqlstore.New(ctx, "sqlite3", "file:whatsmeow.db?_foreign_keys=on", nil)
+	storeDSN := cfg.StoreDSN
+	if storeDSN == "" {
+		storeDSN = cfg.SupabaseDSN
+	}
+	if storeDSN == "" {
+		log.Fatal("WHATSMEOW_STORE_DSN (or SUPABASE_DSN) must be set to a Postgres DSN")
+	}
+	container, err := sqlstore.New(ctx, "postgres", storeDSN, nil)
 	if err != nil {
 		log.Fatalf("initialize whatsmeow store: %v", err)
 	}
