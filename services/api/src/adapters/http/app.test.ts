@@ -1,59 +1,45 @@
 import { describe, expect, it } from "vitest";
 import type { Hono } from "hono";
-import type { Config } from "./config.js";
+import type { Config } from "../../config.js";
+import { SendTimeoutError } from "../../domain/errors.js";
+import type { WebhookConfig } from "../../domain/webhook-config.js";
+import type { SendMessageInput, SendMessagePort, SendMessageResult } from "../../ports/send-message.js";
+import type { WebhookConfigProvider } from "../../ports/webhook-config-provider.js";
 import { createApp } from "./app.js";
-import type { EnqueueInput, JobTransport, PollResult, WebhookConfigRow } from "./transport.js";
-import app from "./index.js";
 
 /**
- * In-memory JobTransport so the HTTP surface is exercised without any network
- * I/O. Behavior is driven by constructor options.
+ * Fake input ports so the HTTP mapping is tested in isolation: no service
+ * layer, no polling, no network.
  */
-class FakeTransport implements JobTransport {
-  enqueueCalls: EnqueueInput[] = [];
-  pollCalls: string[] = [];
+class FakeSendMessage implements SendMessagePort {
+  calls: SendMessageInput[] = [];
 
   constructor(
-    private readonly opts: {
-      serial?: string;
-      pollResult?: PollResult | null;
-      pollBehavior?: () => PollResult | null;
-      webhookConfig?: WebhookConfigRow | null;
-    } = {},
+    private readonly behavior: (
+      input: SendMessageInput,
+    ) => Promise<SendMessageResult> = async () => ({
+      status: "succeeded",
+      wamid: "wamid.test.123",
+    }),
   ) {}
 
-  async enqueue(input: EnqueueInput): Promise<string> {
-    this.enqueueCalls.push(input);
-    return this.opts.serial ?? "11111111-1111-1111-1111-111111111111";
-  }
-
-  async poll(serial: string): Promise<PollResult | null> {
-    this.pollCalls.push(serial);
-    if (this.opts.pollBehavior !== undefined) {
-      return this.opts.pollBehavior();
-    }
-    return (
-      this.opts.pollResult ?? {
-        status: "succeeded",
-        result: { wa_message_id: "wamid.test.123" },
-        lastError: null,
-      }
-    );
-  }
-
-  async getWebhookConfig(_phoneNumberId: string): Promise<WebhookConfigRow | null> {
-    return this.opts.webhookConfig ?? null;
+  async send(input: SendMessageInput): Promise<SendMessageResult> {
+    this.calls.push(input);
+    return this.behavior(input);
   }
 }
 
-const SUCCESS_RESULT: PollResult = {
-  status: "succeeded",
-  result: { wa_message_id: "wamid.test.123" },
-  lastError: null,
-};
+class FakeWebhookConfig implements WebhookConfigProvider {
+  constructor(private readonly value: WebhookConfig | null = null) {}
+
+  async get(_phoneNumberId: string): Promise<WebhookConfig | null> {
+    return this.value;
+  }
+}
 
 function makeApp(
-  transport: JobTransport = new FakeTransport(),
+  sendMessage: SendMessagePort = new FakeSendMessage(),
+  webhookConfig: WebhookConfigProvider = new FakeWebhookConfig(),
   overrides: Partial<Config> = {},
 ): Hono {
   const config: Config = {
@@ -66,7 +52,7 @@ function makeApp(
     resultPollMs: 5,
     ...overrides,
   };
-  return createApp({ transport, config });
+  return createApp({ sendMessage, webhookConfig, config });
 }
 
 const VALID_MESSAGE = {
@@ -98,7 +84,7 @@ async function sendRequest(
 
 describe("GET /", () => {
   it("returns ok and service name", async () => {
-    const res = await app.request("/");
+    const res = await makeApp().request("/");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, service: "api" });
   });
@@ -121,7 +107,7 @@ describe("POST /:phone_number_id/messages — auth", () => {
   });
 
   it("skips auth when API_AUTH_TOKEN is empty", async () => {
-    const res = await sendRequest(makeApp(new FakeTransport(), { apiAuthToken: "" }), {
+    const res = await sendRequest(makeApp(new FakeSendMessage(), undefined, { apiAuthToken: "" }), {
       headers: { authorization: "" },
     });
     expect(res.status).toBe(200);
@@ -167,8 +153,7 @@ describe("POST /:phone_number_id/messages — validation", () => {
   });
 
   it("returns 400 on unparseable JSON", async () => {
-    const app = makeApp();
-    const res = await app.request("/12345/messages", {
+    const res = await makeApp().request("/12345/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -180,6 +165,14 @@ describe("POST /:phone_number_id/messages — validation", () => {
     expect((await res.json()).error.code).toBe(100);
   });
 
+  it("returns 400 on a non-object JSON body", async () => {
+    const res = await sendRequest(makeApp(), { body: null });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { message: "Invalid request body", type: "OAuthException", code: 100 },
+    });
+  });
+
   it.each([["utility"], ["authentication"], ["service"]])(
     "accepts category %s",
     async (category) => {
@@ -189,10 +182,10 @@ describe("POST /:phone_number_id/messages — validation", () => {
   );
 });
 
-describe("POST /:phone_number_id/messages — send + poll", () => {
+describe("POST /:phone_number_id/messages — send mapping", () => {
   it("returns the success envelope with the worker wamid", async () => {
-    const transport = new FakeTransport({ pollResult: SUCCESS_RESULT });
-    const res = await sendRequest(makeApp(transport), { path: "/12345/messages" });
+    const sendMessage = new FakeSendMessage();
+    const res = await sendRequest(makeApp(sendMessage), { path: "/12345/messages" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -200,19 +193,21 @@ describe("POST /:phone_number_id/messages — send + poll", () => {
       contacts: [{ input: "62812345678", wa_id: "62812345678" }],
       messages: [{ id: "wamid.test.123" }],
     });
-    expect(transport.enqueueCalls).toHaveLength(1);
-    expect(transport.enqueueCalls[0]).toEqual({
+    expect(sendMessage.calls).toHaveLength(1);
+    expect(sendMessage.calls[0]).toMatchObject({
       phoneNumberId: "12345",
       payload: VALID_MESSAGE,
       idempotencyKey: undefined,
     });
+    expect(sendMessage.calls[0].signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("returns 500 WABA envelope with lastError when the job failed", async () => {
-    const transport = new FakeTransport({
-      pollResult: { status: "failed", result: null, lastError: "recipient not on WhatsApp" },
-    });
-    const res = await sendRequest(makeApp(transport));
+  it("returns 500 WABA envelope with the failed reason", async () => {
+    const sendMessage = new FakeSendMessage(async () => ({
+      status: "failed",
+      reason: "recipient not on WhatsApp",
+    }));
+    const res = await sendRequest(makeApp(sendMessage));
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
@@ -224,60 +219,69 @@ describe("POST /:phone_number_id/messages — send + poll", () => {
     });
   });
 
-  it("returns 504 WABA envelope when the job never reaches a terminal state", async () => {
-    const transport = new FakeTransport({
-      pollBehavior: () => ({ status: "pending", result: null, lastError: null }),
+  it("maps a failed 'Internal server error' reason to the 500 envelope", async () => {
+    const sendMessage = new FakeSendMessage(async () => ({
+      status: "failed",
+      reason: "Internal server error",
+    }));
+    const res = await sendRequest(makeApp(sendMessage));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({
+      error: { message: "Internal server error", type: "OAuthException", code: 131000 },
     });
-    const app = makeApp(transport, { sendTimeoutMs: 20, resultPollMs: 5 });
-    const res = await sendRequest(app);
+  });
+
+  it("returns 504 WABA envelope when the service reports a timeout", async () => {
+    const sendMessage = new FakeSendMessage(() => Promise.reject(new SendTimeoutError()));
+    const res = await sendRequest(makeApp(sendMessage));
 
     expect(res.status).toBe(504);
     expect(await res.json()).toEqual({
       error: { message: "Send timed out", type: "OAuthException", code: 131000 },
     });
-    expect(transport.pollCalls.length).toBeGreaterThan(1);
   });
 
-  it("returns 500 when the job succeeded without a wa_message_id", async () => {
-    const transport = new FakeTransport({
-      pollResult: { status: "succeeded", result: {}, lastError: null },
-    });
-    const res = await sendRequest(makeApp(transport));
+  it("returns 500 WABA envelope on unexpected send errors", async () => {
+    const sendMessage = new FakeSendMessage(() => Promise.reject(new Error("boom")));
+    const res = await sendRequest(makeApp(sendMessage));
 
     expect(res.status).toBe(500);
-    expect((await res.json()).error.code).toBe(131000);
+    expect(await res.json()).toEqual({
+      error: { message: "Internal server error", type: "OAuthException", code: 131000 },
+    });
   });
 });
 
 describe("POST /:phone_number_id/messages — idempotency", () => {
-  it("passes the Idempotency-Key header to the transport", async () => {
-    const transport = new FakeTransport();
-    const res = await sendRequest(makeApp(transport), {
+  it("passes the Idempotency-Key header to the send port", async () => {
+    const sendMessage = new FakeSendMessage();
+    const res = await sendRequest(makeApp(sendMessage), {
       headers: { "idempotency-key": "key-from-header" },
     });
     expect(res.status).toBe(200);
-    expect(transport.enqueueCalls[0].idempotencyKey).toBe("key-from-header");
+    expect(sendMessage.calls[0].idempotencyKey).toBe("key-from-header");
   });
 
   it("falls back to the body idempotency_key when no header is sent", async () => {
-    const transport = new FakeTransport();
-    const res = await sendRequest(makeApp(transport), {
+    const sendMessage = new FakeSendMessage();
+    const res = await sendRequest(makeApp(sendMessage), {
       body: { ...VALID_MESSAGE, idempotency_key: "key-from-body" },
     });
     expect(res.status).toBe(200);
-    expect(transport.enqueueCalls[0].idempotencyKey).toBe("key-from-body");
+    expect(sendMessage.calls[0].idempotencyKey).toBe("key-from-body");
     // The idempotency key is kept out of the stored payload.
-    expect(transport.enqueueCalls[0].payload).toEqual(VALID_MESSAGE);
+    expect(sendMessage.calls[0].payload).toEqual(VALID_MESSAGE);
   });
 
   it("lets the header win over the body idempotency_key", async () => {
-    const transport = new FakeTransport();
-    const res = await sendRequest(makeApp(transport), {
+    const sendMessage = new FakeSendMessage();
+    const res = await sendRequest(makeApp(sendMessage), {
       headers: { "idempotency-key": "header-wins" },
       body: { ...VALID_MESSAGE, idempotency_key: "body-loses" },
     });
     expect(res.status).toBe(200);
-    expect(transport.enqueueCalls[0].idempotencyKey).toBe("header-wins");
+    expect(sendMessage.calls[0].idempotencyKey).toBe("header-wins");
   });
 });
 
@@ -300,7 +304,7 @@ describe("GET /internal/webhook-config", () => {
   });
 
   it("returns 401 when INTERNAL_TOKEN is unset (route disabled)", async () => {
-    const res = await makeApp(new FakeTransport(), { internalToken: "" }).request(
+    const res = await makeApp(new FakeSendMessage(), undefined, { internalToken: "" }).request(
       "/internal/webhook-config?phone_number_id=123",
       { headers: baseHeaders },
     );
@@ -316,12 +320,14 @@ describe("GET /internal/webhook-config", () => {
   });
 
   it("returns webhook_url and webhook_secret", async () => {
-    const transport = new FakeTransport({
-      webhookConfig: { webhook_url: "https://hooks.example.com/wa", webhook_secret: "s3cret" },
+    const webhookConfig = new FakeWebhookConfig({
+      webhook_url: "https://hooks.example.com/wa",
+      webhook_secret: "s3cret",
     });
-    const res = await makeApp(transport).request("/internal/webhook-config?phone_number_id=123", {
-      headers: baseHeaders,
-    });
+    const res = await makeApp(new FakeSendMessage(), webhookConfig).request(
+      "/internal/webhook-config?phone_number_id=123",
+      { headers: baseHeaders },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       webhook_url: "https://hooks.example.com/wa",
@@ -330,12 +336,14 @@ describe("GET /internal/webhook-config", () => {
   });
 
   it("includes webhook_secret as null when it is unset", async () => {
-    const transport = new FakeTransport({
-      webhookConfig: { webhook_url: "https://hooks.example.com/wa", webhook_secret: null },
+    const webhookConfig = new FakeWebhookConfig({
+      webhook_url: "https://hooks.example.com/wa",
+      webhook_secret: null,
     });
-    const res = await makeApp(transport).request("/internal/webhook-config?phone_number_id=123", {
-      headers: baseHeaders,
-    });
+    const res = await makeApp(new FakeSendMessage(), webhookConfig).request(
+      "/internal/webhook-config?phone_number_id=123",
+      { headers: baseHeaders },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       webhook_url: "https://hooks.example.com/wa",
@@ -344,8 +352,8 @@ describe("GET /internal/webhook-config", () => {
   });
 
   it("returns 404 when no config exists for the phone number", async () => {
-    const transport = new FakeTransport({ webhookConfig: null });
-    const res = await makeApp(transport).request(
+    const webhookConfig = new FakeWebhookConfig(null);
+    const res = await makeApp(new FakeSendMessage(), webhookConfig).request(
       "/internal/webhook-config?phone_number_id=unknown",
       { headers: baseHeaders },
     );

@@ -1,42 +1,15 @@
 /**
- * Job transport abstraction (jobs + webhook configs) plus the Supabase-backed
- * implementation. The app layer depends on the `JobTransport` interface so
- * tests can inject a fake transport that performs no network I/O.
- */
-
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-
-export interface EnqueueInput {
-  phoneNumberId: string;
-  payload: unknown;
-  idempotencyKey?: string;
-}
-
-export interface PollResult {
-  status: string;
-  result: unknown;
-  lastError: string | null;
-}
-
-export interface WebhookConfigRow {
-  webhook_url: string;
-  webhook_secret: string | null;
-}
-
-export interface JobTransport {
-  /** INSERT a send_message job and return its `serial`. */
-  enqueue(input: EnqueueInput): Promise<string>;
-  /** Fetch a job by serial (ignores soft-deleted rows); null when absent. */
-  poll(serial: string): Promise<PollResult | null>;
-  /** Fetch webhook config by phone_number_id; null when absent. */
-  getWebhookConfig(phoneNumberId: string): Promise<WebhookConfigRow | null>;
-}
-
-/**
+ * Supabase-backed implementation of the JobTransport driven port.
+ *
  * PostgREST surfaces the unique-constraint violation as HTTP 409 with SQLSTATE
  * 23505; supabase-js reports it via `error.code`. A 409 with HTTP status may
  * also surface as code "409" depending on PostgREST version.
  */
+
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { WebhookConfig } from "../../domain/webhook-config.js";
+import type { EnqueueInput, JobTransport, PollResult } from "../../ports/job-transport.js";
+
 const UNIQUE_VIOLATION_CODES = new Set(["23505", "409"]);
 
 export class SupabaseTransport implements JobTransport {
@@ -104,7 +77,7 @@ export class SupabaseTransport implements JobTransport {
     };
   }
 
-  async getWebhookConfig(phoneNumberId: string): Promise<WebhookConfigRow | null> {
+  async getWebhookConfig(phoneNumberId: string): Promise<WebhookConfig | null> {
     const { data, error } = await this.client
       .from("webhook_configs")
       .select("webhook_url,webhook_secret")
@@ -143,3 +116,6 @@ export class SupabaseTransport implements JobTransport {
 }
 
 export { createClient };
+
+/** Compile-time assertion (Go convention): SupabaseTransport implements JobTransport. */
+const _: JobTransport = undefined as unknown as SupabaseTransport;
