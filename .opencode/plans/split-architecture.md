@@ -145,11 +145,28 @@ sequenceDiagram
 - Applied versions are tracked in the `schema_migrations` table, so reruns are
   idempotent.
 
+#### Table Convention (all tables)
+
+Every table carries the same mandatory columns:
+
+| Column | Type | Purpose |
+| ------ | ---- | ------- |
+| id | `bigserial` primary key | native row counter only; never used for relationships |
+| serial | `uuid not null default gen_random_uuid()` | stable unique identifier used for relationships, updates, and external references |
+| created_at | `timestamptz not null default now()` | row creation |
+| updated_at | `timestamptz not null default now()` | auto-maintained by the `set_updated_at()` trigger on UPDATE |
+| deleted_at | `timestamptz` | soft delete; queries filter `deleted_at is null` |
+
+- `serial` is unique per table and is the key for every update, delete, and
+  relationship reference; `id` stays opaque to the application.
+- Soft-deleted rows keep their `serial` and `idempotency_key` uniqueness.
+
 Table `public.jobs`:
 
 ```sql
 create table if not exists public.jobs (
-    id              uuid primary key default gen_random_uuid(),
+    id              bigserial primary key,
+    serial          uuid not null default gen_random_uuid(),
     type            text not null default 'send_message',
     phone_number_id text not null,
     payload         jsonb not null,
@@ -163,12 +180,22 @@ create table if not exists public.jobs (
     completed_at    timestamptz,
     last_error      text,
     result          jsonb,
-    idempotency_key text unique,
-    created_at      timestamptz not null default now()
+    idempotency_key text,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now(),
+    deleted_at      timestamptz
 );
 
+create unique index if not exists jobs_serial_idx
+    on public.jobs (serial);
+create unique index if not exists jobs_idempotency_key_idx
+    on public.jobs (idempotency_key) where idempotency_key is not null;
 create index if not exists jobs_claim_idx
     on public.jobs (status, available_at, created_at);
+
+create trigger jobs_set_updated_at
+    before update on public.jobs
+    for each row execute function public.set_updated_at();
 ```
 
 Table `public.webhook_configs` (managed through the API; read by the worker via
@@ -176,11 +203,22 @@ the API, per the chosen flow):
 
 ```sql
 create table if not exists public.webhook_configs (
-    phone_number_id text primary key,
+    id              bigserial primary key,
+    serial          uuid not null default gen_random_uuid(),
+    phone_number_id text not null unique,
     webhook_url     text not null,
     webhook_secret  text,
-    updated_at      timestamptz not null default now()
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now(),
+    deleted_at      timestamptz
 );
+
+create unique index if not exists webhook_configs_serial_idx
+    on public.webhook_configs (serial);
+
+create trigger webhook_configs_set_updated_at
+    before update on public.webhook_configs
+    for each row execute function public.set_updated_at();
 ```
 
 - **Write (API):** `supabase-js` REST `INSERT` with an idempotency key.
@@ -199,8 +237,9 @@ update public.jobs
 returning *;
 ```
 
-- **Complete:** `update public.jobs set status = $2, completed_at = now(),
-  last_error = $3, result = $4 where id = $1;`
+- **Complete (by serial):** `update public.jobs set status = $2,
+  completed_at = now(), last_error = $3, result = $4
+  where serial = $1 and deleted_at is null;`
 - Retry semantics: on failure set `status='pending'`, `attempts = attempts + 1`,
   `available_at = now() + 2^attempts seconds`; when `attempts >= max_attempts`
   mark `status='failed'` (dead-letter).

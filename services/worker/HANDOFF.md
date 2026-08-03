@@ -25,6 +25,9 @@ Root commands: `npm install`, then `npm run dev` / `npm run build` /
 - `cmd/migrate` applies them: `SUPABASE_DSN=... go run ./cmd/migrate
   -direction up` (also `down [-steps N]` and `version`). `MIGRATIONS_DIR`
   defaults to `../../shared/db/migrations`.
+- Table convention: `id bigserial` (counter only), `serial uuid unique` (used
+  for all relationships/updates), `created_at`, `updated_at` (trigger-maintained),
+  `deleted_at` (soft delete).
 - Verified against a throwaway postgres:16 container: up → v2, idempotent,
   down 1 step → v1, up → v2.
 
