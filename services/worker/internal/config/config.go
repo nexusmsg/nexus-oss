@@ -15,7 +15,6 @@ type WebhookConfig struct {
 
 type Config struct {
 	Port         int
-	LogLevel     string
 	APIAuthToken string
 	Webhook      WebhookConfig
 }
@@ -23,7 +22,6 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:         getEnvInt("PORT", 8080),
-		LogLevel:     getEnv("LOG_LEVEL", "info"),
 		APIAuthToken: getEnv("API_AUTH_TOKEN", ""),
 		Webhook: WebhookConfig{
 			URL:                getEnv("WEBHOOK_URL", ""),

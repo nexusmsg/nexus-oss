@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
-	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -36,8 +35,6 @@ type sendResponse struct {
 	result domain.SendResult
 	err    error
 }
-
-var _ ports.WhatsAppClient = (*Client)(nil)
 
 func NewClient(ctx context.Context, container *sqlstore.Container) (*Client, error) {
 	workerCtx, workerStop := context.WithCancel(context.Background())

@@ -1,4 +1,22 @@
 # Handoff Notes
+# Handoff Notes
+
+## Monorepo Restructure (M1)
+
+The project is now a Turborepo monorepo:
+
+- `apps/` — UI placeholder (`.gitkeep` only).
+- `services/api/` — Node.js Hono API scaffold; enqueue + synchronous result
+  wait and internal webhook-config API land in later milestones.
+- `services/worker/` — this Go worker (this document now lives here).
+- `shared/db/migrations/` — golang-migrate SQL migrations (M2).
+- Root `package.json` + `turbo.json` orchestrate every package.
+
+Root commands: `npm install`, then `npm run dev` / `npm run build` /
+`npm run test` (Turborepo). This document is now relative to
+`services/worker/`; references such as `../../.opencode/plans/` and
+`../../README.md` point back to the repo root.
+
 
 ## Current Status
 
@@ -118,13 +136,13 @@ The following are intentionally not implemented yet:
 - Full media mappings for image, video, audio, document, and sticker messages.
 
 Do not invent schemas or media IDs for these types without first updating
-`docs/api-mapping-webhook.md` and `.opencode/plans/waba-webhook-mapping.md`.
+`docs/api-mapping-webhook.md` and `../../.opencode/plans/waba-webhook-mapping.md`.
 
 ## Relevant Files
 
 - `AGENTS.md`: repository architecture and implementation rules.
 - `docs/api-mapping-webhook.md`: source mapping specification.
-- `.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
+- `../../.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
 - `internal/adapters/whatsmeow/handler.go`: raw WhatsMeow event translation.
 - `internal/adapters/whatsmeow/client.go`: WhatsMeow lifecycle and quiet logger.
 - `internal/service/message.go`: WABA payload mapping, logging, and forwarding.
@@ -135,12 +153,33 @@ Do not invent schemas or media IDs for these types without first updating
 - `internal/adapters/httpapi/server.go`: Echo v4 Direct Send server.
 - `internal/service/outbound.go`: Direct Send validation and response mapping.
 
+## Unused Code Cleanup
+
+Completed cleanup based on `../../.opencode/plans/remove-unused.md`:
+
+- Removed `internal/core/ports/whatsapp_client.go`; the interface had no
+  consumers and the application uses the concrete WhatsMeow adapter directly.
+- Removed the unused `Config.LogLevel` field and `LOG_LEVEL` lookup.
+- Removed the ignored local `whatsmeow.db` runtime artifact. A fresh start may
+  require WhatsApp login again because the local session database is gone.
+- Kept plans, mapping documentation, tests, and optional outbound WABA fields;
+  they are still referenced or represent supported API shape.
+
+Cleanup verification:
+
+```text
+go test ./...        32 passed
+go test -race ./... 32 passed
+go vet ./...        passed
+git diff --check    passed
+```
+
 ## Next Agent Guidance
 
 - Read `AGENTS.md` before changing architecture.
 - Keep the current separation between raw event translation and WABA payload
   construction.
-- Update tests and `.opencode/plans/waba-webhook-mapping.md` for every new
+- Update tests and `../../.opencode/plans/waba-webhook-mapping.md` for every new
   mapping or runtime behavior change.
 - Run `gofmt`, `go test ./...`, and `go vet ./...` before handoff.
 - Do not commit `whatsmeow.db`, credentials, or `.opencode` index artifacts.
@@ -155,7 +194,7 @@ git diff --check    passed
 ```
 
 A manual Direct Send smoke test was completed successfully for recipient
-`6285293322073` using the text request documented in `README.md`.
+`6285293322073` using the text request documented in `../../README.md`.
 
 ## Direct Send API Status
 
@@ -193,7 +232,7 @@ envelope. Queue capacity is currently fixed at 32 commands.
 
 ## Direct Send Relevant Files
 
-- `.opencode/plans/waba-direct-send.md`: implementation plan and boundary.
+- `../../.opencode/plans/waba-direct-send.md`: implementation plan and boundary.
 - `internal/core/domain/outbound.go`: outbound WABA request/response models.
 - `internal/core/ports/message_sender.go`: outbound contracts.
 - `internal/service/outbound.go`: validation and response mapping.

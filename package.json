@@ -1,0 +1,18 @@
+{
+  "name": "waba-api-unofficial",
+  "private": true,
+  "packageManager": "npm@11.3.0",
+  "workspaces": [
+    "apps/*",
+    "services/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  }
+}

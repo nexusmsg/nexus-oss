@@ -20,7 +20,7 @@ The current implementation logs payloads and sends HTTP webhooks when configured
 
 Status: Completed
 
-- [x] Read `docs/api-mapping-webhook.md`.
+- [x] Read `services/worker/docs/api-mapping-webhook.md`.
 - [x] Inspect the WhatsMeow adapter, domain, ports, service, configuration, and composition root.
 - [x] Identify incorrect current mappings.
 - [x] Confirm logging-only behavior for this phase.
@@ -42,7 +42,7 @@ Status: Completed
 Acceptance criteria:
 
 - Domain packages do not import WhatsMeow or HTTP packages.
-- The WABA model can represent every mapping documented in `docs/api-mapping-webhook.md`.
+- The WABA model can represent every mapping documented in `services/worker/docs/api-mapping-webhook.md`.
 - Unsupported data is omitted instead of represented as invented text.
 
 ### Milestone 2: WhatsMeow Protobuf Truth Table and Event Mapping

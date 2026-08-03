@@ -46,3 +46,13 @@ vendor/
 
 # Local OpenCode index artifacts
 .opencode/index/
+
+# Node / Turbo
+node_modules/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+.turbo/
+
+# Go worker build output
+services/worker/bin/
