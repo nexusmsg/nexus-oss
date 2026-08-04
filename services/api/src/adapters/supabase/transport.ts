@@ -11,19 +11,30 @@
  * also surface as code "409" depending on PostgREST version.
  */
 
+import { randomUUID } from "node:crypto";
 import { PostgrestClient } from "@supabase/postgrest-js";
 import type {
   CreateSessionInput,
   Session,
   SessionQrCode,
 } from "../../domain/session.js";
-import type { WebhookConfig } from "../../domain/webhook-config.js";
+import type {
+  WebhookConfig,
+  WebhookSubscription,
+} from "../../domain/webhook-config.js";
 import type { EnqueueInput, JobTransport, PollResult } from "../../ports/job-transport.js";
 import type { SessionTransport } from "../../ports/session-transport.js";
+import type {
+  CreateWebhookConfigInput,
+  UpdateWebhookConfigInput,
+  WebhookConfigManagementTransport,
+} from "../../ports/webhook-config-management.js";
 
 const UNIQUE_VIOLATION_CODES = new Set(["23505", "409"]);
 
-export class SupabaseTransport implements JobTransport, SessionTransport {
+export class SupabaseTransport
+  implements JobTransport, SessionTransport, WebhookConfigManagementTransport
+{
   private readonly client: PostgrestClient;
 
   constructor(client: PostgrestClient) {
@@ -91,7 +102,7 @@ export class SupabaseTransport implements JobTransport, SessionTransport {
   async getWebhookConfig(phoneNumberId: string): Promise<WebhookConfig | null> {
     const { data, error } = await this.client
       .from("webhook_configs")
-      .select("webhook_url,webhook_secret")
+      .select("*")
       .eq("phone_number_id", phoneNumberId)
       .is("deleted_at", null)
       .maybeSingle();
@@ -99,12 +110,207 @@ export class SupabaseTransport implements JobTransport, SessionTransport {
     if (error) {
       throw new Error(`get webhook config: ${error.message}`);
     }
-    if (data === null) {
-      return null;
+    return data === null ? null : this.mapWebhookConfig(data);
+  }
+
+  // ---------------------------------------------------------------------------
+  // WebhookConfigManagementTransport
+  // ---------------------------------------------------------------------------
+
+  async createConfig(input: CreateWebhookConfigInput): Promise<WebhookConfig> {
+    const row: Record<string, unknown> = {
+      phone_number_id: input.phoneNumberId,
+      webhook_url: input.webhookUrl,
+      webhook_secret: input.webhookSecret ?? randomUUID(),
+    };
+
+    const { data, error } = await this.client
+      .from("webhook_configs")
+      .insert(row)
+      .select("*")
+      .single();
+
+    if (error) {
+      // phone_number_id is unique: a repeat create returns the existing config
+      // instead of erroring, so the caller stays idempotent.
+      if (UNIQUE_VIOLATION_CODES.has(String(error.code ?? ""))) {
+        const existing = await this.fetchConfigBy("phone_number_id", input.phoneNumberId);
+        if (existing !== null) {
+          return existing;
+        }
+      }
+      throw new Error(`create webhook config: ${error.message}`);
     }
+    if (data === null) {
+      throw new Error("create webhook config: no row returned");
+    }
+    return this.mapWebhookConfig(data);
+  }
+
+  async getConfig(serial: string): Promise<WebhookConfig | null> {
+    return this.fetchConfigBy("serial", serial);
+  }
+
+  async getConfigByPhoneNumberId(phoneNumberId: string): Promise<WebhookConfig | null> {
+    return this.fetchConfigBy("phone_number_id", phoneNumberId);
+  }
+
+  async listConfigs(): Promise<WebhookConfig[]> {
+    const { data, error } = await this.client
+      .from("webhook_configs")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`list webhook configs: ${error.message}`);
+    }
+    return (data ?? []).map((row) => this.mapWebhookConfig(row));
+  }
+
+  async updateConfig(
+    serial: string,
+    input: UpdateWebhookConfigInput,
+  ): Promise<WebhookConfig> {
+    const row: Record<string, unknown> = {};
+    if (input.webhookUrl !== undefined) row.webhook_url = input.webhookUrl;
+    if (input.webhookSecret !== undefined) row.webhook_secret = input.webhookSecret;
+    if (input.enabled !== undefined) row.enabled = input.enabled;
+    if (input.maxRetries !== undefined) row.max_retries = input.maxRetries;
+    if (input.retryDelayMs !== undefined) row.retry_delay_ms = input.retryDelayMs;
+    if (input.timeoutMs !== undefined) row.timeout_ms = input.timeoutMs;
+
+    const { data, error } = await this.client
+      .from("webhook_configs")
+      .update(row)
+      .eq("serial", serial)
+      .select("*")
+      .single();
+
+    if (error) {
+      throw new Error(`update webhook config: ${error.message}`);
+    }
+    if (data === null) {
+      throw new Error("update webhook config: no row returned");
+    }
+    return this.mapWebhookConfig(data);
+  }
+
+  async deleteConfig(serial: string): Promise<void> {
+    const { error } = await this.client
+      .from("webhook_configs")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("serial", serial);
+
+    if (error) {
+      throw new Error(`delete webhook config: ${error.message}`);
+    }
+  }
+
+  async listSubscriptions(configId: number): Promise<WebhookSubscription[]> {
+    const { data, error } = await this.client
+      .from("webhook_subscriptions")
+      .select("*")
+      .eq("webhook_config_id", configId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      throw new Error(`list webhook subscriptions: ${error.message}`);
+    }
+    return (data ?? []).map((row) => this.mapSubscription(row));
+  }
+
+  async addSubscription(configId: number, eventType: string): Promise<WebhookSubscription> {
+    const { data, error } = await this.client
+      .from("webhook_subscriptions")
+      .insert({ webhook_config_id: configId, event_type: eventType })
+      .select("*")
+      .single();
+
+    if (error) {
+      // (webhook_config_id, event_type) is unique: a repeat add returns the
+      // existing subscription instead of erroring (idempotent).
+      if (UNIQUE_VIOLATION_CODES.has(String(error.code ?? ""))) {
+        const existing = await this.fetchSubscriptionBy(configId, eventType);
+        if (existing !== null) {
+          return existing;
+        }
+      }
+      throw new Error(`add webhook subscription: ${error.message}`);
+    }
+    if (data === null) {
+      throw new Error("add webhook subscription: no row returned");
+    }
+    return this.mapSubscription(data);
+  }
+
+  async removeSubscription(configId: number, eventType: string): Promise<void> {
+    const { error } = await this.client
+      .from("webhook_subscriptions")
+      .delete()
+      .eq("webhook_config_id", configId)
+      .eq("event_type", eventType);
+
+    if (error) {
+      throw new Error(`remove webhook subscription: ${error.message}`);
+    }
+  }
+
+  /** Fetch a non-deleted webhook config row by a single column; null when absent. */
+  private async fetchConfigBy(column: string, value: string): Promise<WebhookConfig | null> {
+    const { data, error } = await this.client
+      .from("webhook_configs")
+      .select("*")
+      .eq(column, value)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`fetch webhook config by ${column}: ${error.message}`);
+    }
+    return data === null ? null : this.mapWebhookConfig(data);
+  }
+
+  /** Fetch a subscription by (config id, event type); null when absent. */
+  private async fetchSubscriptionBy(
+    configId: number,
+    eventType: string,
+  ): Promise<WebhookSubscription | null> {
+    const { data, error } = await this.client
+      .from("webhook_subscriptions")
+      .select("*")
+      .eq("webhook_config_id", configId)
+      .eq("event_type", eventType)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`fetch webhook subscription: ${error.message}`);
+    }
+    return data === null ? null : this.mapSubscription(data);
+  }
+
+  private mapWebhookConfig(row: Record<string, unknown>): WebhookConfig {
     return {
-      webhook_url: data.webhook_url,
-      webhook_secret: data.webhook_secret,
+      id: row.id as number,
+      serial: row.serial as string,
+      phoneNumberId: row.phone_number_id as string,
+      webhookUrl: row.webhook_url as string,
+      webhookSecret: (row.webhook_secret as string | null) ?? null,
+      enabled: row.enabled as boolean,
+      maxRetries: row.max_retries as number,
+      retryDelayMs: row.retry_delay_ms as number,
+      timeoutMs: row.timeout_ms as number,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  private mapSubscription(row: Record<string, unknown>): WebhookSubscription {
+    return {
+      id: row.id as number,
+      serial: row.serial as string,
+      webhookConfigId: row.webhook_config_id as number,
+      eventType: row.event_type as string,
+      createdAt: row.created_at as string,
     };
   }
 
@@ -332,6 +538,7 @@ export class SupabaseTransport implements JobTransport, SessionTransport {
 
 export { PostgrestClient };
 
-/** Compile-time assertion (Go convention): SupabaseTransport implements both ports. */
+/** Compile-time assertions (Go convention): SupabaseTransport implements all three ports. */
 const _: JobTransport = undefined as unknown as SupabaseTransport;
 const __: SessionTransport = undefined as unknown as SupabaseTransport;
+const ___ : WebhookConfigManagementTransport = undefined as unknown as SupabaseTransport;

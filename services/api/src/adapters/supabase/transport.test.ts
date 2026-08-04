@@ -170,17 +170,39 @@ describe("SupabaseTransport.poll", () => {
 });
 
 describe("SupabaseTransport.getWebhookConfig", () => {
-  it("maps webhook_url and webhook_secret", async () => {
+  it("maps the webhook config row", async () => {
     const { client, log } = createFakeSupabase([
-      { data: { webhook_url: "https://hooks.example.com", webhook_secret: "s3cret" }, error: null },
+      {
+        data: {
+          id: 1,
+          serial: "cfg-1",
+          phone_number_id: "12345",
+          webhook_url: "https://hooks.example.com",
+          webhook_secret: "s3cret",
+          enabled: true,
+          max_retries: 3,
+          retry_delay_ms: 1000,
+          timeout_ms: 10000,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        error: null,
+      },
     ]);
     const transport = new SupabaseTransport(client);
 
     const result = await transport.getWebhookConfig("12345");
 
     expect(result).toEqual({
-      webhook_url: "https://hooks.example.com",
-      webhook_secret: "s3cret",
+      id: 1,
+      serial: "cfg-1",
+      phoneNumberId: "12345",
+      webhookUrl: "https://hooks.example.com",
+      webhookSecret: "s3cret",
+      enabled: true,
+      maxRetries: 3,
+      retryDelayMs: 1000,
+      timeoutMs: 10000,
+      createdAt: "2026-01-01T00:00:00Z",
     });
     const ops = log.filter((e) => e.op === "eq" || e.op === "is");
     expect(ops[0]).toEqual({ op: "eq", column: "phone_number_id", value: "12345" });

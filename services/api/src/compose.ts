@@ -17,6 +17,7 @@ import type { WebhookConfigProvider } from "./ports/webhook-config-provider.js";
 import { GetWebhookConfigService } from "./service/get-webhook-config.js";
 import { SendMessageService } from "./service/send-message.js";
 import { SessionService } from "./service/session.js";
+import { WebhookConfigManagementService } from "./service/webhook-config-management.js";
 
 export function buildApp(config: Config): Hono {
   if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
@@ -40,7 +41,9 @@ export function buildApp(config: Config): Hono {
     resultPollMs: config.resultPollMs,
   });
   const webhookConfig: WebhookConfigProvider = new GetWebhookConfigService(transport);
-  // SupabaseTransport implements both JobTransport and SessionTransport.
+  // SupabaseTransport implements JobTransport, SessionTransport, and
+  // WebhookConfigManagementTransport.
   const sessionService: SessionServicePort = new SessionService(transport);
-  return createApp({ sendMessage, webhookConfig, sessionService, config });
+  const webhookManagement = new WebhookConfigManagementService(transport);
+  return createApp({ sendMessage, webhookConfig, webhookManagement, sessionService, config });
 }

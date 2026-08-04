@@ -20,15 +20,23 @@ class FakeJobTransport implements JobTransport {
 }
 
 describe("GetWebhookConfigService.get", () => {
-  it("delegates to the transport and returns the config", async () => {
-    const service = new GetWebhookConfigService(
-      new FakeJobTransport({ webhook_url: "https://hooks.example.com", webhook_secret: "s3cret" }),
-    );
+  const CONFIG: WebhookConfig = {
+    id: 1,
+    serial: "cfg-1",
+    phoneNumberId: "12345",
+    webhookUrl: "https://hooks.example.com",
+    webhookSecret: "s3cret",
+    enabled: true,
+    maxRetries: 3,
+    retryDelayMs: 1000,
+    timeoutMs: 10000,
+    createdAt: "2026-01-01T00:00:00Z",
+  };
 
-    await expect(service.get("12345")).resolves.toEqual({
-      webhook_url: "https://hooks.example.com",
-      webhook_secret: "s3cret",
-    });
+  it("delegates to the transport and returns the config", async () => {
+    const service = new GetWebhookConfigService(new FakeJobTransport(CONFIG));
+
+    await expect(service.get("12345")).resolves.toEqual(CONFIG);
   });
 
   it("returns null when the transport has no config", async () => {

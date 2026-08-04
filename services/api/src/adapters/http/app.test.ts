@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import type { Config } from "../../config.js";
-import { SendTimeoutError } from "../../domain/errors.js";
+import { SendTimeoutError, ValidationError } from "../../domain/errors.js";
 import type { CreateSessionInput, Session } from "../../domain/session.js";
-import type { WebhookConfig } from "../../domain/webhook-config.js";
+import { SUPPORTED_EVENT_TYPES, type WebhookConfig, type WebhookSubscription } from "../../domain/webhook-config.js";
 import type { SendMessageInput, SendMessagePort, SendMessageResult } from "../../ports/send-message.js";
 import type { SessionServicePort } from "../../ports/session-service.js";
 import type { WebhookConfigProvider } from "../../ports/webhook-config-provider.js";
+import type { CreateWebhookConfigInput, UpdateWebhookConfigInput } from "../../ports/webhook-config-management.js";
+import type { WebhookConfigManagementServicePort } from "../../service/webhook-config-management.js";
 import { createApp } from "./app.js";
 
 /**
@@ -36,6 +38,151 @@ class FakeWebhookConfig implements WebhookConfigProvider {
 
   async get(_phoneNumberId: string): Promise<WebhookConfig | null> {
     return this.value;
+  }
+}
+
+const SAMPLE_CONFIG: WebhookConfig = {
+  id: 1,
+  serial: "cfg-serial-1",
+  phoneNumberId: "12345",
+  webhookUrl: "https://hooks.example.com/wa",
+  webhookSecret: "s3cret",
+  enabled: true,
+  maxRetries: 3,
+  retryDelayMs: 1000,
+  timeoutMs: 10000,
+  createdAt: "2026-01-01T00:00:00Z",
+};
+
+function sampleSubscription(eventType: string): WebhookSubscription {
+  return {
+    id: 10,
+    serial: `sub-serial-${eventType}`,
+    webhookConfigId: 1,
+    eventType,
+    createdAt: "2026-01-01T00:00:00Z",
+  };
+}
+
+class FakeWebhookConfigManagement implements WebhookConfigManagementServicePort {
+  configs = new Map<string, WebhookConfig>();
+  subscriptions = new Map<number, WebhookSubscription[]>();
+  private nextId = 100;
+
+  constructor(configs: WebhookConfig[] = []) {
+    for (const cfg of configs) {
+      this.configs.set(cfg.serial, cfg);
+      this.subscriptions.set(cfg.id, [sampleSubscription("messages")]);
+    }
+  }
+
+  async createConfig(input: CreateWebhookConfigInput): Promise<WebhookConfig> {
+    if (input.phoneNumberId === undefined || input.phoneNumberId.trim() === "") {
+      throw new ValidationError("phone_number_id is required");
+    }
+    if (!isValidWebhookUrl(input.webhookUrl)) {
+      throw new ValidationError("webhook_url must be a valid http(s) URL");
+    }
+    const existing = [...this.configs.values()].find(
+      (c) => c.phoneNumberId === input.phoneNumberId,
+    );
+    if (existing !== undefined) throw new Error("already exists");
+    const cfg: WebhookConfig = {
+      id: this.nextId++,
+      serial: `cfg-serial-${this.nextId}`,
+      phoneNumberId: input.phoneNumberId,
+      webhookUrl: input.webhookUrl,
+      webhookSecret: input.webhookSecret ?? "generated-secret",
+      enabled: true,
+      maxRetries: 3,
+      retryDelayMs: 1000,
+      timeoutMs: 10000,
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    this.configs.set(cfg.serial, cfg);
+    this.subscriptions.set(cfg.id, [sampleSubscription("messages")]);
+    return cfg;
+  }
+
+  async getConfig(serial: string): Promise<WebhookConfig | null> {
+    return this.configs.get(serial) ?? null;
+  }
+
+  async listConfigs(): Promise<WebhookConfig[]> {
+    return [...this.configs.values()];
+  }
+
+  async updateConfig(
+    serial: string,
+    input: UpdateWebhookConfigInput,
+  ): Promise<WebhookConfig | null> {
+    const cfg = this.configs.get(serial);
+    if (cfg === undefined) return null;
+    if (input.webhookUrl !== undefined && !isValidWebhookUrl(input.webhookUrl)) {
+      throw new ValidationError("webhook_url must be a valid http(s) URL");
+    }
+    const updated: WebhookConfig = {
+      ...cfg,
+      webhookUrl: input.webhookUrl ?? cfg.webhookUrl,
+      webhookSecret: input.webhookSecret ?? cfg.webhookSecret,
+      enabled: input.enabled ?? cfg.enabled,
+      maxRetries: input.maxRetries ?? cfg.maxRetries,
+      retryDelayMs: input.retryDelayMs ?? cfg.retryDelayMs,
+      timeoutMs: input.timeoutMs ?? cfg.timeoutMs,
+    };
+    this.configs.set(serial, updated);
+    return updated;
+  }
+
+  async deleteConfig(serial: string): Promise<WebhookConfig | null> {
+    const cfg = this.configs.get(serial);
+    if (cfg === undefined) return null;
+    this.configs.delete(serial);
+    return cfg;
+  }
+
+  async listSubscriptions(serial: string): Promise<WebhookSubscription[] | null> {
+    const cfg = this.configs.get(serial);
+    if (cfg === undefined) return null;
+    return this.subscriptions.get(cfg.id) ?? [];
+  }
+
+  async addSubscription(
+    serial: string,
+    eventType: string,
+  ): Promise<WebhookSubscription | null> {
+    const cfg = this.configs.get(serial);
+    if (cfg === undefined) return null;
+    if (!SUPPORTED_EVENT_TYPES.includes(eventType as (typeof SUPPORTED_EVENT_TYPES)[number])) {
+      throw new ValidationError(
+        `event_type must be one of: ${SUPPORTED_EVENT_TYPES.join(", ")}`,
+      );
+    }
+    const subs = this.subscriptions.get(cfg.id) ?? [];
+    const existing = subs.find((s) => s.eventType === eventType);
+    if (existing !== undefined) return existing;
+    const sub = sampleSubscription(eventType);
+    this.subscriptions.set(cfg.id, [...subs, sub]);
+    return sub;
+  }
+
+  async removeSubscription(serial: string, eventType: string): Promise<WebhookConfig | null> {
+    const cfg = this.configs.get(serial);
+    if (cfg === undefined) return null;
+    this.subscriptions.set(
+      cfg.id,
+      (this.subscriptions.get(cfg.id) ?? []).filter((s) => s.eventType !== eventType),
+    );
+    return cfg;
+  }
+}
+
+function isValidWebhookUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -83,6 +230,7 @@ function makeApp(
   webhookConfig: WebhookConfigProvider = new FakeWebhookConfig(),
   overrides: Partial<Config> = {},
   sessionService: SessionServicePort = new FakeSessionService(),
+  webhookManagement: WebhookConfigManagementServicePort = new FakeWebhookConfigManagement(),
 ): Hono {
   const config: Config = {
     port: 3000,
@@ -94,7 +242,7 @@ function makeApp(
     resultPollMs: 5,
     ...overrides,
   };
-  return createApp({ sendMessage, webhookConfig, sessionService, config });
+  return createApp({ sendMessage, webhookConfig, webhookManagement, sessionService, config });
 }
 
 const VALID_MESSAGE = {
@@ -362,10 +510,7 @@ describe("GET /internal/webhook-config", () => {
   });
 
   it("returns webhook_url and webhook_secret", async () => {
-    const webhookConfig = new FakeWebhookConfig({
-      webhook_url: "https://hooks.example.com/wa",
-      webhook_secret: "s3cret",
-    });
+    const webhookConfig = new FakeWebhookConfig(SAMPLE_CONFIG);
     const res = await makeApp(new FakeSendMessage(), webhookConfig).request(
       "/internal/webhook-config?phone_number_id=123",
       { headers: baseHeaders },
@@ -378,10 +523,7 @@ describe("GET /internal/webhook-config", () => {
   });
 
   it("includes webhook_secret as null when it is unset", async () => {
-    const webhookConfig = new FakeWebhookConfig({
-      webhook_url: "https://hooks.example.com/wa",
-      webhook_secret: null,
-    });
+    const webhookConfig = new FakeWebhookConfig({ ...SAMPLE_CONFIG, webhookSecret: null });
     const res = await makeApp(new FakeSendMessage(), webhookConfig).request(
       "/internal/webhook-config?phone_number_id=123",
       { headers: baseHeaders },
@@ -403,5 +545,212 @@ describe("GET /internal/webhook-config", () => {
     expect(await res.json()).toEqual({
       error: { message: "Webhook config not found", type: "OAuthException", code: 100 },
     });
+  });
+});
+
+const AUTH_HEADERS = { authorization: "Bearer test-api-token" };
+
+function apiRequest(
+  app: Hono,
+  path: string,
+  overrides: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+): Promise<Response> {
+  const { method = "GET", body, headers = {} } = overrides;
+  return app.request(path, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      ...AUTH_HEADERS,
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }) as Promise<Response>;
+}
+
+describe("/api/v1/webhooks — auth", () => {
+  it("returns 401 without a bearer token", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", { headers: {} });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      error: { message: "Invalid OAuth access token", type: "OAuthException", code: 190 },
+    });
+  });
+});
+
+describe("POST /api/v1/webhooks", () => {
+  it("creates a config and returns the snake_case JSON with 201", async () => {
+    const app = makeApp();
+    const res = await apiRequest(app, "/api/v1/webhooks", {
+      method: "POST",
+      body: {
+        phone_number_id: "12345",
+        webhook_url: "https://hooks.example.com/wa",
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json).toMatchObject({
+      phone_number_id: "12345",
+      webhook_url: "https://hooks.example.com/wa",
+      enabled: true,
+      max_retries: 3,
+      retry_delay_ms: 1000,
+      timeout_ms: 10000,
+    });
+    expect(json.webhook_secret).toBe("generated-secret");
+    expect(json.serial).toBeDefined();
+  });
+
+  it("rejects an invalid webhook_url with 400", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks", {
+      method: "POST",
+      body: { phone_number_id: "12345", webhook_url: "not-a-url" },
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toBe("webhook_url must be a valid http(s) URL");
+  });
+
+  it("rejects an empty phone_number_id with 400", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks", {
+      method: "POST",
+      body: { phone_number_id: "", webhook_url: "https://hooks.example.com/wa" },
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toBe("phone_number_id is required");
+  });
+
+  it("returns 400 on an unparseable body", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe(100);
+  });
+});
+
+describe("GET /api/v1/webhooks", () => {
+  it("lists configs", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks");
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.webhooks).toHaveLength(1);
+    expect(json.webhooks[0]).toMatchObject({ serial: "cfg-serial-1", webhook_url: "https://hooks.example.com/wa" });
+  });
+});
+
+describe("GET /api/v1/webhooks/:serial", () => {
+  it("returns the config", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).serial).toBe("cfg-serial-1");
+  });
+
+  it("returns 404 for an unknown serial", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks/nope");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.message).toBe("Webhook config not found");
+  });
+});
+
+describe("PATCH /api/v1/webhooks/:serial", () => {
+  it("updates fields and returns the updated config", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1", {
+      method: "PATCH",
+      body: { enabled: false, max_retries: 5 },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ enabled: false, max_retries: 5 });
+  });
+
+  it("returns 404 for an unknown serial", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks/nope", {
+      method: "PATCH",
+      body: { enabled: false },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an invalid URL with 400", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1", {
+      method: "PATCH",
+      body: { webhook_url: "ftp://x" },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("DELETE /api/v1/webhooks/:serial", () => {
+  it("soft-deletes and returns ok", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1", {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("returns 404 for an unknown serial", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks/nope", { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("/api/v1/webhooks/:serial/subscriptions", () => {
+  it("GET lists subscriptions", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1/subscriptions");
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.subscriptions).toHaveLength(1);
+    expect(json.subscriptions[0].event_type).toBe("messages");
+  });
+
+  it("GET returns 404 for an unknown config", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks/nope/subscriptions");
+    expect(res.status).toBe(404);
+  });
+
+  it("POST adds a subscription", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1/subscriptions", {
+      method: "POST",
+      body: { event_type: "contacts" },
+    });
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).event_type).toBe("contacts");
+  });
+
+  it("POST rejects an unsupported event_type with 400", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1/subscriptions", {
+      method: "POST",
+      body: { event_type: "bogus" },
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toContain("event_type must be one of");
+  });
+
+  it("DELETE removes a subscription", async () => {
+    const management = new FakeWebhookConfigManagement([SAMPLE_CONFIG]);
+    const res = await apiRequest(makeApp(undefined, undefined, {}, undefined, management), "/api/v1/webhooks/cfg-serial-1/subscriptions/messages", {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
   });
 });
