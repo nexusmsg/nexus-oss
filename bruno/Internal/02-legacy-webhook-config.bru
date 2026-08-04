@@ -1,0 +1,15 @@
+meta {
+  name: Get Webhook Config (Legacy)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/internal/webhook-config?phone_number_id={{webhook_phone_number_id}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{internal_token}}
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Send Text Message
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/{{phone_number_id}}/messages
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "messaging_product": "whatsapp",
+    "type": "text",
+    "to": "{{to_number}}",
+    "text": {
+      "body": "Hello from Bruno!"
+    }
+  }
+}

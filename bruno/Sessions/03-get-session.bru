@@ -1,0 +1,15 @@
+meta {
+  name: Get Session
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/sessions/{{session_serial}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+}

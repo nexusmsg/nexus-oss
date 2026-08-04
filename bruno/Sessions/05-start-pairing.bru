@@ -1,0 +1,15 @@
+meta {
+  name: Start Pairing
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/api/v1/sessions/{{session_serial}}/pairing
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+}

@@ -1,0 +1,15 @@
+meta {
+  name: List Subscriptions
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{base_url}}/api/v1/webhooks/{{webhook_serial}}/subscriptions
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+}

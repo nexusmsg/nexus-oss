@@ -1,0 +1,15 @@
+meta {
+  name: Get Webhook Config (Internal)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/internal/v1/webhook-config?phone_number_id={{webhook_phone_number_id}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{internal_token}}
+}

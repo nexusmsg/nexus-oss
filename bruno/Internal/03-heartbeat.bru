@@ -1,0 +1,22 @@
+meta {
+  name: Send Heartbeat
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/internal/v1/heartbeat
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{internal_token}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "phone_number_id": "{{phone_number_id}}"
+  }
+}

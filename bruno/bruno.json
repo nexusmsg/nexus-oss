@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "WABA API Unofficial",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

@@ -1,0 +1,15 @@
+meta {
+  name: List Webhook Configs
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/v1/webhooks
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+}

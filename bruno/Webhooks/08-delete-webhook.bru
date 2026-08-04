@@ -1,0 +1,15 @@
+meta {
+  name: Delete Webhook Config
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{base_url}}/api/v1/webhooks/{{webhook_serial}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+}

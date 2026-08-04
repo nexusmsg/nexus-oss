@@ -1,0 +1,15 @@
+meta {
+  name: Remove Subscription
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{base_url}}/api/v1/webhooks/{{webhook_serial}}/subscriptions/message_status
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{api_token}}
+}
