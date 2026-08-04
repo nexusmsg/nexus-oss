@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: waba
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -82,6 +82,7 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
       MAX_ATTEMPTS: "3"
       WEBHOOK_CONFIG_TTL: "30s"
+      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-10s}
       BUSINESS_ACCOUNT_ID: ${BUSINESS_ACCOUNT_ID:-}
       # format: phone_number_id:number pairs, comma-separated, e.g. 1001:628123456789,1002:628987654321
       WABA_DEVICES: ${WABA_DEVICES:-}
