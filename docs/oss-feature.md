@@ -1,0 +1,47 @@
+Nexus OSS
+
+- Workspace
+  - API Keys
+- Providers
+  - WhatsApp
+    - Sessions
+      - QR Login
+      - Pairing Code
+      - Reconnect
+      - Logout
+      - Connection Status
+    - Contacts
+    - Groups
+- Messaging
+  - Send Message
+  - Receive Message
+  - Media
+  - Delivery Status
+- Integrations
+  - Webhooks
+    - Endpoint
+    - Secret
+    - Event Subscription
+    - Retry Policy
+- Queue
+  - Retry Queue
+- Developer Platform
+  - REST API
+  - OpenAPI
+  - SDK
+  - CLI
+  - Documentation
+  - Examples
+- Observability
+  - Metrics
+    - API Metrics
+    - Message Metrics
+    - Session Metrics
+  - Logs
+    - API Logs
+    - Session Logs
+    - Message Logs
+  - Health
+    - API
+    - Database
+    - Session
