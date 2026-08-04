@@ -83,7 +83,10 @@ func (c *Consumer) processOnce(ctx context.Context) error {
 }
 
 func (c *Consumer) processJob(ctx context.Context, job domain.Job) error {
-	if job.Type != domain.JobTypeSendMessage {
+	switch job.Type {
+	case domain.JobTypeSendMessage, domain.JobTypePairing, domain.JobTypeLogout:
+		// handled below
+	default:
 		err := fmt.Errorf("unknown job type %q", job.Type)
 		if failErr := c.store.Fail(ctx, job.Serial, err); failErr != nil {
 			return fmt.Errorf("fail job %s: %w", job.Serial, failErr)

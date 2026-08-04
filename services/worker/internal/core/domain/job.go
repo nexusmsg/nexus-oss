@@ -7,6 +7,8 @@ import (
 
 const (
 	JobTypeSendMessage = "send_message"
+	JobTypePairing     = "pairing"
+	JobTypeLogout      = "logout"
 
 	JobStatusPending   = "pending"
 	JobStatusClaimed   = "claimed"

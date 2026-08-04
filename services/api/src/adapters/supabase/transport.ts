@@ -12,12 +12,18 @@
  */
 
 import { PostgrestClient } from "@supabase/postgrest-js";
+import type {
+  CreateSessionInput,
+  Session,
+  SessionQrCode,
+} from "../../domain/session.js";
 import type { WebhookConfig } from "../../domain/webhook-config.js";
 import type { EnqueueInput, JobTransport, PollResult } from "../../ports/job-transport.js";
+import type { SessionTransport } from "../../ports/session-transport.js";
 
 const UNIQUE_VIOLATION_CODES = new Set(["23505", "409"]);
 
-export class SupabaseTransport implements JobTransport {
+export class SupabaseTransport implements JobTransport, SessionTransport {
   private readonly client: PostgrestClient;
 
   constructor(client: PostgrestClient) {
@@ -118,9 +124,214 @@ export class SupabaseTransport implements JobTransport {
     }
     return data ?? null;
   }
+
+  // ---------------------------------------------------------------------------
+  // SessionTransport
+  // ---------------------------------------------------------------------------
+
+  async createSession(input: CreateSessionInput): Promise<string> {
+    const row: Record<string, unknown> = {
+      phone_number_id: input.phoneNumberId,
+      number: input.number,
+    };
+    if (input.displayPhone !== undefined && input.displayPhone !== "") {
+      row.display_phone = input.displayPhone;
+    }
+
+    const { data, error } = await this.client
+      .from("sessions")
+      .insert(row)
+      .select("serial")
+      .single();
+
+    if (error) {
+      // phone_number_id is unique: a repeat create returns the existing serial
+      // instead of erroring, so the caller stays idempotent.
+      if (UNIQUE_VIOLATION_CODES.has(String(error.code ?? ""))) {
+        const existing = await this.fetchSessionBy("phone_number_id", input.phoneNumberId);
+        if (existing !== null) {
+          return existing.serial;
+        }
+      }
+      throw new Error(`create session: ${error.message}`);
+    }
+    if (data === null) {
+      throw new Error("create session: no row returned");
+    }
+    return data.serial;
+  }
+
+  async getSession(serial: string): Promise<Session | null> {
+    return this.fetchSessionBy("serial", serial);
+  }
+
+  async listSessions(): Promise<Session[]> {
+    const { data, error } = await this.client
+      .from("sessions")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`list sessions: ${error.message}`);
+    }
+    return (data ?? []).map((row) => this.mapSession(row));
+  }
+
+  async updateSessionStatus(serial: string, status: string): Promise<void> {
+    const { error } = await this.client
+      .from("sessions")
+      .update({ status })
+      .eq("serial", serial);
+
+    if (error) {
+      throw new Error(`update session status: ${error.message}`);
+    }
+  }
+
+  async createPairingJob(sessionId: number, phoneNumberId: string): Promise<string> {
+    // `payload` is NOT NULL in the jobs table, so pairing jobs carry an empty
+    // object; the worker distinguishes job types by `type`.
+    const { data, error } = await this.client
+      .from("jobs")
+      .insert({
+        type: "pairing",
+        phone_number_id: phoneNumberId,
+        session_id: sessionId,
+        payload: {},
+      })
+      .select("serial")
+      .single();
+
+    if (error) {
+      throw new Error(`create pairing job: ${error.message}`);
+    }
+    if (data === null) {
+      throw new Error("create pairing job: no row returned");
+    }
+    return data.serial;
+  }
+
+  async createLogoutJob(sessionId: number, phoneNumberId: string): Promise<string> {
+    const { data, error } = await this.client
+      .from("jobs")
+      .insert({
+        type: "logout",
+        phone_number_id: phoneNumberId,
+        session_id: sessionId,
+        payload: {},
+      })
+      .select("serial")
+      .single();
+
+    if (error) {
+      throw new Error(`create logout job: ${error.message}`);
+    }
+    if (data === null) {
+      throw new Error("create logout job: no row returned");
+    }
+    return data.serial;
+  }
+
+  async getLatestQrCode(sessionId: number): Promise<SessionQrCode | null> {
+    const { data, error } = await this.client
+      .from("session_qr_codes")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`get latest qr code: ${error.message}`);
+    }
+    if (data === null) {
+      return null;
+    }
+    return this.mapQrCode(data);
+  }
+
+  async storeQrCode(
+    sessionId: number,
+    phoneNumberId: string,
+    qrCode: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    const { error } = await this.client.from("session_qr_codes").insert({
+      session_id: sessionId,
+      phone_number_id: phoneNumberId,
+      qr_code: qrCode,
+      expires_at: expiresAt.toISOString(),
+    });
+
+    if (error) {
+      throw new Error(`store qr code: ${error.message}`);
+    }
+  }
+
+  async updateSessionHeartbeat(phoneNumberId: string): Promise<void> {
+    // PostgREST does not evaluate SQL expressions in update values, so send an
+    // ISO timestamp from the client rather than a literal `"now()"` string.
+    const { error } = await this.client
+      .from("sessions")
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq("phone_number_id", phoneNumberId);
+
+    if (error) {
+      throw new Error(`update session heartbeat: ${error.message}`);
+    }
+  }
+
+  async getSessionByPhoneNumberId(phoneNumberId: string): Promise<Session | null> {
+    return this.fetchSessionBy("phone_number_id", phoneNumberId);
+  }
+
+  /** Fetch a non-deleted session row by a single column; null when absent. */
+  private async fetchSessionBy(column: string, value: string): Promise<Session | null> {
+    const { data, error } = await this.client
+      .from("sessions")
+      .select("*")
+      .eq(column, value)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`fetch session by ${column}: ${error.message}`);
+    }
+    return data === null ? null : this.mapSession(data);
+  }
+
+  private mapSession(row: Record<string, unknown>): Session {
+    return {
+      id: row.id as number,
+      serial: row.serial as string,
+      phoneNumberId: row.phone_number_id as string,
+      number: row.number as string,
+      displayPhone: row.display_phone as string,
+      status: row.status as Session["status"],
+      whatsappId: (row.whatsapp_id as string | null) ?? null,
+      connectedAt: (row.connected_at as string | null) ?? null,
+      lastSeenAt: (row.last_seen_at as string | null) ?? null,
+      loggedOutAt: (row.logged_out_at as string | null) ?? null,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  private mapQrCode(row: Record<string, unknown>): SessionQrCode {
+    return {
+      serial: row.serial as string,
+      sessionId: row.session_id as number,
+      phoneNumberId: row.phone_number_id as string,
+      qrCode: row.qr_code as string,
+      status: row.status as SessionQrCode["status"],
+      expiresAt: row.expires_at as string,
+      createdAt: row.created_at as string,
+    };
+  }
 }
 
 export { PostgrestClient };
 
-/** Compile-time assertion (Go convention): SupabaseTransport implements JobTransport. */
+/** Compile-time assertion (Go convention): SupabaseTransport implements both ports. */
 const _: JobTransport = undefined as unknown as SupabaseTransport;
+const __: SessionTransport = undefined as unknown as SupabaseTransport;

@@ -110,6 +110,56 @@ func (c *Client) connect(ctx context.Context) error {
 	return nil
 }
 
+// Pair runs a QR pairing flow for the device and returns the first QR code.
+// It returns an error if the device already has a stored session or if the
+// context expires before a code is emitted.
+func (c *Client) Pair(ctx context.Context) (string, error) {
+	if c.client == nil || c.client.Store == nil {
+		return "", errors.New("whatsmeow: client or store is nil")
+	}
+	if c.client.Store.ID != nil {
+		return "", errors.New("whatsmeow: already connected")
+	}
+	qrChan, err := c.client.GetQRChannel(ctx)
+	if err != nil {
+		return "", fmt.Errorf("whatsmeow: get QR channel: %w", err)
+	}
+	if err := c.client.ConnectContext(ctx); err != nil {
+		return "", fmt.Errorf("whatsmeow: connect for pairing: %w", err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("whatsmeow: pair: %w", ctx.Err())
+		case evt, ok := <-qrChan:
+			if !ok {
+				return "", errors.New("whatsmeow: QR channel closed before a code was received")
+			}
+			if evt.Event == "code" {
+				return evt.Code, nil
+			}
+			if evt.Event == "error" {
+				if evt.Error != nil {
+					return "", fmt.Errorf("whatsmeow: pair: %w", evt.Error)
+				}
+				return "", errors.New("whatsmeow: pair error")
+			}
+		}
+	}
+}
+
+// Logout disconnects the device and deletes its stored session so the next
+// pairing starts from a clean state.
+func (c *Client) Logout(ctx context.Context) error {
+	if c.client == nil {
+		return errors.New("whatsmeow: client is nil")
+	}
+	if err := c.client.Logout(ctx); err != nil {
+		return fmt.Errorf("whatsmeow: logout: %w", err)
+	}
+	return nil
+}
+
 // reconnectLoop reconnects the device after an unexpected disconnect, retrying
 // every reconnectInterval while ctx is alive. It returns on the first
 // successful connect or when ctx or the send worker is stopped, so shutdown

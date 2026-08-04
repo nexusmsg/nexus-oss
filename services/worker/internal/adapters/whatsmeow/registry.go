@@ -33,6 +33,7 @@ type Registry struct {
 }
 
 var _ ports.OutboundSenderProvider = (*Registry)(nil)
+var _ ports.SessionRegistry = (*Registry)(nil)
 
 // NewRegistry resolves or creates one device per spec and wires each into its
 // own Client, handler, and reconnect loop. Any spec that fails to initialize
@@ -76,6 +77,36 @@ func NewRegistry(ctx context.Context, container *sqlstore.Container, specs []Dev
 
 // Sender returns the message sender registered for phoneNumberID.
 func (r *Registry) Sender(phoneNumberID string) (ports.MessageSender, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	client, ok := r.clients[phoneNumberID]
+	if !ok {
+		return nil, &ports.ErrSenderNotFound{PhoneNumberID: phoneNumberID}
+	}
+	return client, nil
+}
+
+// Pair generates a QR code for the given phone number via its client.
+func (r *Registry) Pair(ctx context.Context, phoneNumberID string) (string, error) {
+	client, err := r.client(phoneNumberID)
+	if err != nil {
+		return "", err
+	}
+	return client.Pair(ctx)
+}
+
+// Logout disconnects the device for the given phone number and clears its
+// stored session.
+func (r *Registry) Logout(ctx context.Context, phoneNumberID string) error {
+	client, err := r.client(phoneNumberID)
+	if err != nil {
+		return err
+	}
+	return client.Logout(ctx)
+}
+
+// client returns the registered client for phoneNumberID.
+func (r *Registry) client(phoneNumberID string) (*Client, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	client, ok := r.clients[phoneNumberID]

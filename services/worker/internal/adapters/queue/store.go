@@ -44,6 +44,12 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
+// Pool returns the underlying connection pool, shared with other queue
+// adapters such as the session store and heartbeat.
+func (s *Store) Pool() *pgxpool.Pool {
+	return s.pool
+}
+
 const claimSQL = `
 update jobs
 set status = 'claimed',

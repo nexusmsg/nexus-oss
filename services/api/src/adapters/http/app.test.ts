@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import type { Config } from "../../config.js";
 import { SendTimeoutError } from "../../domain/errors.js";
+import type { CreateSessionInput, Session } from "../../domain/session.js";
 import type { WebhookConfig } from "../../domain/webhook-config.js";
 import type { SendMessageInput, SendMessagePort, SendMessageResult } from "../../ports/send-message.js";
+import type { SessionServicePort } from "../../ports/session-service.js";
 import type { WebhookConfigProvider } from "../../ports/webhook-config-provider.js";
 import { createApp } from "./app.js";
 
@@ -37,10 +39,50 @@ class FakeWebhookConfig implements WebhookConfigProvider {
   }
 }
 
+const SAMPLE_SESSION: Session = {
+  id: 1,
+  serial: "serial-1",
+  phoneNumberId: "12345",
+  number: "62812345678",
+  displayPhone: "62812345678",
+  status: "connected",
+  whatsappId: null,
+  connectedAt: null,
+  lastSeenAt: null,
+  loggedOutAt: null,
+  createdAt: "2026-01-01T00:00:00Z",
+};
+
+class FakeSessionService implements SessionServicePort {
+  async createSession(_input: CreateSessionInput): Promise<Session> {
+    return SAMPLE_SESSION;
+  }
+  async getSession(_serial: string): Promise<Session | null> {
+    return SAMPLE_SESSION;
+  }
+  async listSessions(): Promise<Session[]> {
+    return [SAMPLE_SESSION];
+  }
+  async startPairing(_serial: string): Promise<{ jobSerial: string } | null> {
+    return { jobSerial: "job-1" };
+  }
+  async getPairingQr(_serial: string): Promise<{ status: string; qrCode: string | null } | null> {
+    return { status: "ready", qrCode: "qr-data" };
+  }
+  async startLogout(_serial: string): Promise<{ jobSerial: string } | null> {
+    return { jobSerial: "job-2" };
+  }
+  async getStatus(_serial: string): Promise<{ status: string } | null> {
+    return { status: "connected" };
+  }
+  async heartbeat(_phoneNumberId: string): Promise<void> {}
+}
+
 function makeApp(
   sendMessage: SendMessagePort = new FakeSendMessage(),
   webhookConfig: WebhookConfigProvider = new FakeWebhookConfig(),
   overrides: Partial<Config> = {},
+  sessionService: SessionServicePort = new FakeSessionService(),
 ): Hono {
   const config: Config = {
     port: 3000,
@@ -52,7 +94,7 @@ function makeApp(
     resultPollMs: 5,
     ...overrides,
   };
-  return createApp({ sendMessage, webhookConfig, config });
+  return createApp({ sendMessage, webhookConfig, sessionService, config });
 }
 
 const VALID_MESSAGE = {

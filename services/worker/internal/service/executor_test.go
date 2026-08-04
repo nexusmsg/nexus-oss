@@ -46,7 +46,7 @@ func TestJobExecutorReturnsWAMessageID(t *testing.T) {
 	provider := &fakeSenderProvider{senders: map[string]ports.MessageSender{
 		"phone-1": &recordingSender{},
 	}}
-	executor := NewJobExecutor(provider)
+	executor := NewJobExecutor(provider, nil, nil)
 
 	result, err := executor.Handle(context.Background(), domain.Job{
 		PhoneNumberID: "phone-1",
@@ -61,7 +61,7 @@ func TestJobExecutorReturnsWAMessageID(t *testing.T) {
 }
 
 func TestJobExecutorRejectsUnknownPhoneNumber(t *testing.T) {
-	executor := NewJobExecutor(&fakeSenderProvider{senders: map[string]ports.MessageSender{}})
+	executor := NewJobExecutor(&fakeSenderProvider{senders: map[string]ports.MessageSender{}}, nil, nil)
 
 	_, err := executor.Handle(context.Background(), domain.Job{
 		PhoneNumberID: "phone-missing",
@@ -79,7 +79,7 @@ func TestJobExecutorRejectsUnknownPhoneNumber(t *testing.T) {
 func TestJobExecutorRejectsInvalidPayload(t *testing.T) {
 	executor := NewJobExecutor(&fakeSenderProvider{senders: map[string]ports.MessageSender{
 		"phone-1": &recordingSender{},
-	}})
+	}}, nil, nil)
 	payload, err := json.Marshal(domain.OutboundMessage{
 		MessagingProduct: "whatsapp",
 		To:               "628123456789",
@@ -103,7 +103,7 @@ func TestJobExecutorRejectsInvalidPayload(t *testing.T) {
 }
 
 func TestJobExecutorRejectsUnmarshalablePayload(t *testing.T) {
-	executor := NewJobExecutor(&fakeSenderProvider{senders: map[string]ports.MessageSender{}})
+	executor := NewJobExecutor(&fakeSenderProvider{senders: map[string]ports.MessageSender{}}, nil, nil)
 
 	_, err := executor.Handle(context.Background(), domain.Job{
 		PhoneNumberID: "phone-1",
@@ -118,7 +118,7 @@ func TestJobExecutorWrapsSendFailure(t *testing.T) {
 	provider := &fakeSenderProvider{senders: map[string]ports.MessageSender{
 		"phone-1": &failingSender{},
 	}}
-	executor := NewJobExecutor(provider)
+	executor := NewJobExecutor(provider, nil, nil)
 
 	_, err := executor.Handle(context.Background(), domain.Job{
 		PhoneNumberID: "phone-1",

@@ -25,6 +25,7 @@ type Config struct {
 	PollInterval      time.Duration
 	MaxAttempts       int
 	WebhookConfigTTL  time.Duration
+	HeartbeatInterval time.Duration
 	Devices           []Device
 }
 
@@ -34,6 +35,10 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	webhookConfigTTL, err := getEnvDuration("WEBHOOK_CONFIG_TTL", "30s")
+	if err != nil {
+		return nil, err
+	}
+	heartbeatInterval, err := getEnvDuration("HEARTBEAT_INTERVAL", "10s")
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +56,7 @@ func Load() (*Config, error) {
 		PollInterval:      pollInterval,
 		MaxAttempts:       getEnvInt("MAX_ATTEMPTS", 3),
 		WebhookConfigTTL:  webhookConfigTTL,
+		HeartbeatInterval: heartbeatInterval,
 		Devices:           devices,
 	}, nil
 }

@@ -51,6 +51,12 @@ func main() {
 	}
 	defer store.Close()
 
+	sessionStore, err := queue.NewSessionStore(store.Pool(), log.Default())
+	if err != nil {
+		log.Fatalf("initialize session store: %v", err)
+	}
+	heartbeat := queue.NewHeartbeat(store.Pool(), cfg.HeartbeatInterval, log.Default())
+
 	provider := apiconfig.NewClient(cfg.APIURL, cfg.InternalToken, cfg.WebhookConfigTTL, log.Default())
 	svc := service.NewMessage(log.Default(), provider)
 
@@ -67,12 +73,17 @@ func main() {
 		log.Fatalf("initialize whatsapp registry: %v", err)
 	}
 
-	executor := service.NewJobExecutor(registry)
+	executor := service.NewJobExecutor(registry, sessionStore, registry)
 	consumer := queue.NewConsumer(store, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
 
 	consumerErr := make(chan error, 1)
 	go func() {
 		consumerErr <- consumer.Run(ctx)
+	}()
+
+	heartbeatErr := make(chan error, 1)
+	go func() {
+		heartbeatErr <- heartbeat.Run(ctx)
 	}()
 
 	// Partial device failures must not kill the worker; the registry keeps the
@@ -87,6 +98,10 @@ func main() {
 	case err := <-consumerErr:
 		if err != nil {
 			log.Printf("queue consumer stopped: %v", err)
+		}
+	case err := <-heartbeatErr:
+		if err != nil {
+			log.Printf("heartbeat stopped: %v", err)
 		}
 	case <-ctx.Done():
 		log.Println("shutting down")
