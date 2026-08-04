@@ -38,11 +38,7 @@ export class SessionService implements SessionServicePort {
     if (session === null) {
       return null;
     }
-    // The transport maps serial → numeric id for the FK on session_qr_codes.
-    const jobSerial = await this.transport.createPairingJob(
-      session.id,
-      session.phoneNumberId,
-    );
+    const jobSerial = await this.transport.createPairingJob(session.phoneNumberId);
     return { jobSerial };
   }
 
@@ -63,10 +59,7 @@ export class SessionService implements SessionServicePort {
     if (session === null) {
       return null;
     }
-    const jobSerial = await this.transport.createLogoutJob(
-      session.id,
-      session.phoneNumberId,
-    );
+    const jobSerial = await this.transport.createLogoutJob(session.phoneNumberId);
     return { jobSerial };
   }
 

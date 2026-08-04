@@ -16,9 +16,9 @@ export interface SessionTransport {
   /** Set a session's status by serial. */
   updateSessionStatus(serial: string, status: string): Promise<void>;
   /** INSERT a pairing job; returns its `serial`. */
-  createPairingJob(sessionId: number, phoneNumberId: string): Promise<string>;
+  createPairingJob(phoneNumberId: string): Promise<string>;
   /** INSERT a logout job; returns its `serial`. */
-  createLogoutJob(sessionId: number, phoneNumberId: string): Promise<string>;
+  createLogoutJob(phoneNumberId: string): Promise<string>;
   /** Fetch the most recent QR code for a session; null when absent. */
   getLatestQrCode(sessionId: number): Promise<SessionQrCode | null>;
   /** INSERT a QR code row for a session. */

@@ -22,8 +22,8 @@ class FakeSessionTransport implements SessionTransport {
   sessions: Session[] = [];
   createCalls: CreateSessionInput[] = [];
   heartbeatCalls: string[] = [];
-  pairingJobs: { sessionId: number; phoneNumberId: string }[] = [];
-  logoutJobs: { sessionId: number; phoneNumberId: string }[] = [];
+  pairingJobs: string[] = [];
+  logoutJobs: string[] = [];
   latestQr: SessionQrCode | null = null;
   createdSerial = "session-serial-1";
   createReturnsNullSerial = false;
@@ -43,13 +43,13 @@ class FakeSessionTransport implements SessionTransport {
 
   async updateSessionStatus(_serial: string, _status: string): Promise<void> {}
 
-  async createPairingJob(sessionId: number, phoneNumberId: string): Promise<string> {
-    this.pairingJobs.push({ sessionId, phoneNumberId });
+  async createPairingJob(phoneNumberId: string): Promise<string> {
+    this.pairingJobs.push(phoneNumberId);
     return "pairing-job-1";
   }
 
-  async createLogoutJob(sessionId: number, phoneNumberId: string): Promise<string> {
-    this.logoutJobs.push({ sessionId, phoneNumberId });
+  async createLogoutJob(phoneNumberId: string): Promise<string> {
+    this.logoutJobs.push(phoneNumberId);
     return "logout-job-1";
   }
 
@@ -160,7 +160,7 @@ describe("SessionService.startPairing", () => {
     await expect(service.startPairing("session-serial-1")).resolves.toEqual({
       jobSerial: "pairing-job-1",
     });
-    expect(transport.pairingJobs).toEqual([{ sessionId: 1, phoneNumberId: "12345" }]);
+    expect(transport.pairingJobs).toEqual(["12345"]);
   });
 
   it("returns null when the session is missing", async () => {
@@ -238,7 +238,7 @@ describe("SessionService.startLogout", () => {
     await expect(service.startLogout("session-serial-1")).resolves.toEqual({
       jobSerial: "logout-job-1",
     });
-    expect(transport.logoutJobs).toEqual([{ sessionId: 1, phoneNumberId: "12345" }]);
+    expect(transport.logoutJobs).toEqual(["12345"]);
   });
 
   it("returns null when the session is missing", async () => {

@@ -395,15 +395,15 @@ export class SupabaseTransport
     }
   }
 
-  async createPairingJob(sessionId: number, phoneNumberId: string): Promise<string> {
+  async createPairingJob(phoneNumberId: string): Promise<string> {
     // `payload` is NOT NULL in the jobs table, so pairing jobs carry an empty
-    // object; the worker distinguishes job types by `type`.
+    // object; the worker distinguishes job types by `type`. The worker maps
+    // sessions by phone_number_id, so no session_id column is stored.
     const { data, error } = await this.client
       .from("jobs")
       .insert({
         type: "pairing",
         phone_number_id: phoneNumberId,
-        session_id: sessionId,
         payload: {},
       })
       .select("serial")
@@ -418,13 +418,12 @@ export class SupabaseTransport
     return data.serial;
   }
 
-  async createLogoutJob(sessionId: number, phoneNumberId: string): Promise<string> {
+  async createLogoutJob(phoneNumberId: string): Promise<string> {
     const { data, error } = await this.client
       .from("jobs")
       .insert({
         type: "logout",
         phone_number_id: phoneNumberId,
-        session_id: sessionId,
         payload: {},
       })
       .select("serial")
