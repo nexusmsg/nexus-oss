@@ -27,5 +27,5 @@ handoff.
 ## Plans and Docs
 
 - Architecture plan: `.opencode/plans/split-architecture.md`
-- Worker handoff: `services/worker/HANDOFF.md`
+- Worker handoff: `HANDOFF.md`
 - Webhook mapping spec: `services/worker/docs/api-mapping-webhook.md`

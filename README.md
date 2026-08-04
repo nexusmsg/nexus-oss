@@ -72,7 +72,7 @@ WABA_DEVICES — comma-separated phone_number_id:number pairs,
   e.g. WABA_DEVICES=1001:628123456789,1002:628987654321
 ```
 
-Details, mapping rules, and handoff notes: `services/worker/HANDOFF.md`,
+Details, mapping rules, and handoff notes: `HANDOFF.md`,
 `services/worker/docs/api-mapping-webhook.md`, `services/worker/AGENTS.md`.
 
 ## API (Node.js Hono)

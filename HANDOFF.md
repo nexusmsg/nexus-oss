@@ -1,5 +1,4 @@
 # Handoff Notes
-# Handoff Notes
 
 ## Monorepo Restructure (M1)
 
@@ -8,19 +7,19 @@ The project is now a Turborepo monorepo:
 - `apps/` — UI placeholder (`.gitkeep` only).
 - `services/api/` — Node.js Hono API scaffold; enqueue + synchronous result
   wait and internal webhook-config API land in later milestones.
-- `services/worker/` — this Go worker (this document now lives here).
+- `services/worker/` — this Go worker.
 - `shared/db/migrations/` — golang-migrate SQL migrations (M2).
 - Root `package.json` + `turbo.json` orchestrate every package.
 
 Root commands: `npm install`, then `npm run dev` / `npm run build` /
-`npm run test` (Turborepo). This document is now relative to
-`services/worker/`; references such as `../../.opencode/plans/` and
-`../../README.md` point back to the repo root.
-
+`npm run test` (Turborepo). This document lives at the repo root, so relative
+references like `.opencode/plans/` and `README.md` resolve from there. Paths
+that are relative to the worker (for example `internal/...` or `cmd/...`) are
+noted as such.
 
 ## Migrations (M2)
 
-- Schema migrations live in `../../shared/db/migrations/` (golang-migrate
+- Schema migrations live in `shared/db/migrations/` (golang-migrate
   format): `000001_create_jobs`, `000002_create_webhook_configs`.
 - `cmd/migrate` applies them: `SUPABASE_DSN=... go run ./cmd/migrate
   -direction up` (also `down [-steps N]` and `version`). `MIGRATIONS_DIR`
@@ -60,8 +59,16 @@ The worker now runs the M5 architecture:
   along with `PORT`/`API_AUTH_TOKEN` worker config — the API owns the HTTP
   surface now.
 
-Latest commit: M5 (see the verification log in
-`../../.opencode/plans/split-architecture.md`).
+Latest commit: M6 (see the verification log in
+`.opencode/plans/split-architecture.md`).
+
+M6 integration, verified against the compose stack: the full
+API → PostgREST → jobs → worker → response chain runs end to end. Dev
+PostgREST keys are HS256 JWTs (`{"role":"postgres"}` signed with
+`PGRST_JWT_SECRET`), and the API talks to bare PostgREST via
+`@supabase/postgrest-js` (supabase-js appends `/rest/v1`, which only exists
+behind Supabase's Kong). Outbound failures surface through the API as WABA
+error envelopes carrying the worker's `last_error`.
 
 Verification at this handoff:
 
@@ -69,6 +76,7 @@ Verification at this handoff:
 go test ./...   58 passed (10 packages)
 go vet ./...   passed
 CGO_ENABLED=0 go build ./...   passed
+api: tsc clean, 51 tests passed
 ```
 
 ## API Surface (M4, for M5 worker wiring)
@@ -83,6 +91,8 @@ Env: `PORT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `API_AUTH_TOKEN`, `INT
 **M5 contract:** the queue consumer must complete succeeded jobs with `result: { "wa_message_id": "<real wamid>" }` (the API reads this exact key). Source: `services/api/src/{app,transport,config}.ts`.
 
 ## Runtime Flow
+
+Paths below are relative to `services/worker/`.
 
 ```text
 WhatsMeow event
@@ -202,13 +212,16 @@ The following are intentionally not implemented yet:
 - Full media mappings for image, video, audio, document, and sticker messages.
 
 Do not invent schemas or media IDs for these types without first updating
-`docs/api-mapping-webhook.md` and `../../.opencode/plans/waba-webhook-mapping.md`.
+`services/worker/docs/api-mapping-webhook.md` and
+`.opencode/plans/waba-webhook-mapping.md`.
 
 ## Relevant Files
 
-- `AGENTS.md`: repository architecture and implementation rules.
+Paths are relative to `services/worker/` unless noted.
+
+- `AGENTS.md` (repo root): repository architecture and implementation rules.
 - `docs/api-mapping-webhook.md`: source mapping specification.
-- `../../.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
+- `.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
 - `internal/adapters/whatsmeow/handler.go`: raw WhatsMeow event translation.
 - `internal/adapters/whatsmeow/client.go`: per-device WhatsMeow lifecycle, send
   queue, and reconnect loop.
@@ -226,11 +239,11 @@ Do not invent schemas or media IDs for these types without first updating
 - `cmd/main.go`: dependency composition and shutdown lifecycle.
 - `internal/service/outbound.go`: outbound validation (reused by the executor).
 - `cmd/migrate/main.go`: golang-migrate migration runner (`SUPABASE_DSN`).
-- `../../shared/db/migrations/`: Supabase schema migrations (golang-migrate).
+- `shared/db/migrations/`: Supabase schema migrations (golang-migrate).
 
 ## Unused Code Cleanup
 
-Completed cleanup based on `../../.opencode/plans/remove-unused.md`:
+Completed cleanup based on `.opencode/plans/remove-unused.md`:
 
 - Removed `internal/core/ports/whatsapp_client.go`; the interface had no
   consumers and the application uses the concrete WhatsMeow adapter directly.
@@ -251,10 +264,10 @@ git diff --check    passed
 
 ## Next Agent Guidance
 
-- Read `AGENTS.md` before changing architecture.
+- Read `services/worker/AGENTS.md` before changing worker architecture.
 - Keep the current separation between raw event translation and WABA payload
   construction.
-- Update tests and `../../.opencode/plans/waba-webhook-mapping.md` for every new
+- Update tests and `.opencode/plans/waba-webhook-mapping.md` for every new
   mapping or runtime behavior change.
 - Run `gofmt`, `go test ./...`, and `go vet ./...` before handoff.
 - Do not commit `whatsmeow.db`, credentials, or `.opencode` index artifacts.
@@ -269,7 +282,7 @@ git diff --check    passed
 ```
 
 A manual Direct Send smoke test was completed successfully for recipient
-`6285293322073` using the text request documented in `../../README.md`.
+`6285293322073` using the text request documented in `README.md`.
 
 ## Direct Send (Removed in M5)
 
