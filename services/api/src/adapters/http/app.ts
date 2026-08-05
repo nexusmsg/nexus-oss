@@ -10,6 +10,7 @@
  */
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { Context } from "hono";
 import type { Config } from "../../config.js";
 import {
@@ -24,7 +25,7 @@ import type { SendMessagePort } from "../../ports/send-message.js";
 import type { SessionServicePort } from "../../ports/session-service.js";
 import type { WebhookConfigProvider } from "../../ports/webhook-config-provider.js";
 import type { WebhookConfigManagementServicePort } from "../../service/webhook-config-management.js";
-import { authorizeBearer } from "./auth.js";
+import { authorizeBearer, WWW_AUTHENTICATE_BASIC } from "./auth.js";
 import {
   WABA_CODE_INTERNAL,
   WABA_CODE_INVALID_PARAM,
@@ -61,7 +62,13 @@ export function createApp({
 
   app.post("/:phone_number_id/messages", async (c) => {
     if (!authorizeBearer(c, config.apiAuthToken)) {
-      return wabaError(c, 401, WABA_CODE_INVALID_TOKEN, "Invalid OAuth access token");
+      return wabaError(
+        c,
+        401,
+        WABA_CODE_INVALID_TOKEN,
+        "Invalid OAuth access token",
+        { "WWW-Authenticate": WWW_AUTHENTICATE_BASIC },
+      );
     }
 
     const phoneNumberId = c.req.param("phone_number_id");
@@ -127,9 +134,30 @@ export function createApp({
   // ---------------------------------------------------------------------------
   const apiV1 = new Hono();
 
+  // CORS for the dashboard's direct cross-origin calls. Must be registered
+  // before the auth guard/routes so it runs first (Hono runs middleware in
+  // registration order). `config.corsOrigins` empty => CORS disabled.
+  if (config.corsOrigins.length > 0) {
+    apiV1.use(
+      "*",
+      cors({
+        origin: config.corsOrigins,
+        allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allowHeaders: ["Authorization", "Content-Type"],
+        credentials: false,
+      }),
+    );
+  }
+
   apiV1.use("*", async (c, next) => {
     if (!authorizeBearer(c, config.apiAuthToken)) {
-      return wabaError(c, 401, WABA_CODE_INVALID_TOKEN, "Invalid OAuth access token");
+      return wabaError(
+        c,
+        401,
+        WABA_CODE_INVALID_TOKEN,
+        "Invalid OAuth access token",
+        { "WWW-Authenticate": WWW_AUTHENTICATE_BASIC },
+      );
     }
     return next();
   });

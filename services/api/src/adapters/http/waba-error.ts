@@ -21,6 +21,7 @@ export function wabaError(
   status: ContentfulStatusCode,
   code: number,
   message: string,
+  headers?: Record<string, string>,
 ): Response {
   return c.json(
     {
@@ -31,5 +32,6 @@ export function wabaError(
       },
     },
     status,
+    headers,
   );
 }

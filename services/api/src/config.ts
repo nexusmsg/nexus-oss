@@ -28,6 +28,25 @@ export interface Config {
   sendTimeoutMs: number;
   /** Delay (ms) between job status polls while waiting for a terminal state. Default 250. */
   resultPollMs: number;
+  /**
+   * Allow-list of origins permitted to call `/api/v1/*` cross-origin (CORS).
+   * Parsed from the comma-separated `CORS_ORIGINS` env var. Defaults to
+   * `["http://localhost:5173"]` (the Vite dev origin); an empty array disables
+   * CORS entirely.
+   */
+  corsOrigins: string[];
+}
+
+const DEFAULT_CORS_ORIGIN = "http://localhost:5173";
+
+function parseCorsOrigins(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [DEFAULT_CORS_ORIGIN];
+  }
+  return value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin !== "");
 }
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
@@ -44,5 +63,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     internalToken: env.INTERNAL_TOKEN ?? "",
     sendTimeoutMs: readPositiveInt(env.SEND_TIMEOUT_MS, 25000),
     resultPollMs: readPositiveInt(env.RESULT_POLL_MS, 250),
+    corsOrigins: parseCorsOrigins(env.CORS_ORIGINS),
   };
 }

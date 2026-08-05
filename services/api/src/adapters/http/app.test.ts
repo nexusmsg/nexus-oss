@@ -241,6 +241,7 @@ function makeApp(
     internalToken: "test-internal-token",
     sendTimeoutMs: 1000,
     resultPollMs: 5,
+    corsOrigins: ["http://localhost:5173"],
     ...overrides,
   };
   return createApp({ sendMessage, webhookConfig, webhookManagement, sessionService, config });
@@ -302,6 +303,63 @@ describe("POST /:phone_number_id/messages — auth", () => {
       headers: { authorization: "" },
     });
     expect(res.status).toBe(200);
+  });
+});
+
+/** base64 of `user:pass`. */
+function basic(user: string, pass: string): string {
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+}
+
+describe("auth — Bearer or Basic scheme", () => {
+  it("accepts a valid Basic password equal to API_AUTH_TOKEN", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      headers: { authorization: basic("nexus", "test-api-token") },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects a Basic header with a wrong password and sends WWW-Authenticate", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      headers: { authorization: basic("nexus", "wrong-password") },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Basic realm="nexus"');
+  });
+
+  it("rejects a malformed Basic header without a colon", async () => {
+    // base64 of "justausername" (no colon)
+    const res = await makeApp().request("/api/v1/webhooks", {
+      headers: { authorization: "Basic anVzdGF1c2VybmFtZQ==" },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Basic realm="nexus"');
+  });
+
+  it("rejects a malformed Basic header that is not base64", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      headers: { authorization: "Basic not-base64!!" },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Basic realm="nexus"');
+  });
+
+  it("rejects with no WWW-Authenticate header when no credentials are sent", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", { headers: {} });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Basic realm="nexus"');
+  });
+
+  it("disables auth for both schemes when API_AUTH_TOKEN is empty", async () => {
+    const app = makeApp(undefined, undefined, { apiAuthToken: "" });
+    const bearer = await app.request("/api/v1/webhooks", {
+      headers: { authorization: "Bearer anything" },
+    });
+    const basicRes = await app.request("/api/v1/webhooks", {
+      headers: { authorization: basic("nexus", "anything") },
+    });
+    expect(bearer.status).toBe(200);
+    expect(basicRes.status).toBe(200);
   });
 });
 
@@ -575,6 +633,65 @@ describe("/api/v1/webhooks — auth", () => {
     expect(await res.json()).toEqual({
       error: { message: "Invalid OAuth access token", type: "OAuthException", code: 190 },
     });
+  });
+});
+
+describe("/api/v1/* — CORS", () => {
+  const ALLOWED = "http://localhost:5173";
+  const DISALLOWED = "http://evil.example.com";
+
+  it("answers an OPTIONS preflight from an allowed origin with CORS headers", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      method: "OPTIONS",
+      headers: {
+        origin: ALLOWED,
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization, content-type",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(ALLOWED);
+    expect(res.headers.get("Access-Control-Allow-Methods")).toContain("GET");
+    expect(res.headers.get("Access-Control-Allow-Methods")).toContain("OPTIONS");
+    expect(res.headers.get("Access-Control-Allow-Headers")?.toLowerCase()).toContain("authorization");
+    expect(res.headers.get("Access-Control-Allow-Headers")?.toLowerCase()).toContain("content-type");
+  });
+
+  it("sets Access-Control-Allow-Origin on an actual GET from an allowed origin", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/webhooks", {
+      headers: { origin: ALLOWED },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(ALLOWED);
+  });
+
+  it("sets no CORS headers for a request from a disallowed origin", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      method: "OPTIONS",
+      headers: {
+        origin: DISALLOWED,
+        "Access-Control-Request-Method": "GET",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("does not emit credentials", async () => {
+    const res = await makeApp().request("/api/v1/webhooks", {
+      method: "OPTIONS",
+      headers: { origin: ALLOWED, "Access-Control-Request-Method": "GET" },
+    });
+    expect(res.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+  });
+
+  it("disables CORS entirely when CORS_ORIGINS is empty", async () => {
+    const app = makeApp(undefined, undefined, { corsOrigins: [] });
+    const res = await apiRequest(app, "/api/v1/webhooks", {
+      headers: { origin: ALLOWED },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 });
 
