@@ -145,6 +145,7 @@ export function createApp({
         phoneNumberId: asString(body.phone_number_id) ?? "",
         number: asString(body.number) ?? "",
         displayPhone: asString(body.display_phone) ?? undefined,
+        businessAccountId: asString(body.business_account_id) ?? undefined,
       });
       return c.json(toSessionJson(session), 201);
     } catch (err) {
@@ -445,6 +446,7 @@ function toSessionJson(session: Session): Record<string, unknown> {
     phone_number_id: session.phoneNumberId,
     number: session.number,
     display_phone: session.displayPhone,
+    business_account_id: session.businessAccountId,
     status: session.status,
     whatsapp_id: session.whatsappId,
     connected_at: session.connectedAt,

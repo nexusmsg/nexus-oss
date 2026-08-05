@@ -45,6 +45,7 @@ describe("Session domain types", () => {
       phoneNumberId: "12345",
       number: "62812345678",
       displayPhone: "62812345678",
+      businessAccountId: "",
       status: "connected",
       whatsappId: null,
       connectedAt: null,

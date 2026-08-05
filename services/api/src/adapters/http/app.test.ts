@@ -192,6 +192,7 @@ const SAMPLE_SESSION: Session = {
   phoneNumberId: "12345",
   number: "62812345678",
   displayPhone: "62812345678",
+  businessAccountId: "",
   status: "connected",
   whatsappId: null,
   connectedAt: null,
@@ -201,8 +202,8 @@ const SAMPLE_SESSION: Session = {
 };
 
 class FakeSessionService implements SessionServicePort {
-  async createSession(_input: CreateSessionInput): Promise<Session> {
-    return SAMPLE_SESSION;
+  async createSession(input: CreateSessionInput): Promise<Session> {
+    return { ...SAMPLE_SESSION, businessAccountId: input.businessAccountId ?? "" };
   }
   async getSession(_serial: string): Promise<Session | null> {
     return SAMPLE_SESSION;
@@ -752,5 +753,38 @@ describe("/api/v1/webhooks/:serial/subscriptions", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+  });
+});
+
+describe("POST /api/v1/sessions", () => {
+  it("echoes business_account_id in the response when provided", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/sessions", {
+      method: "POST",
+      body: {
+        phone_number_id: "12345",
+        number: "62812345678",
+        business_account_id: "waba-account-1",
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      phone_number_id: "12345",
+      business_account_id: "waba-account-1",
+    });
+  });
+
+  it("carries an empty business_account_id when the body omits it", async () => {
+    const res = await apiRequest(makeApp(), "/api/v1/sessions", {
+      method: "POST",
+      body: {
+        phone_number_id: "12345",
+        number: "62812345678",
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.business_account_id).toBe("");
   });
 });

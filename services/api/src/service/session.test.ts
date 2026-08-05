@@ -10,6 +10,7 @@ const SAMPLE_SESSION: Session = {
   phoneNumberId: "12345",
   number: "62812345678",
   displayPhone: "62812345678",
+  businessAccountId: "",
   status: "connected",
   whatsappId: "whatsapp-id-1",
   connectedAt: "2026-01-01T00:00:00Z",
@@ -90,6 +91,26 @@ describe("SessionService.createSession", () => {
     const service = makeService(transport);
 
     await expect(service.createSession(VALID_INPUT)).resolves.toEqual(SAMPLE_SESSION);
+    expect(transport.createCalls).toEqual([VALID_INPUT]);
+  });
+
+  it("forwards businessAccountId to the transport when present", async () => {
+    const transport = new FakeSessionTransport();
+    transport.sessions = [SAMPLE_SESSION];
+    const service = makeService(transport);
+
+    await service.createSession({ ...VALID_INPUT, businessAccountId: "waba-account-1" });
+    expect(transport.createCalls).toEqual([
+      { ...VALID_INPUT, businessAccountId: "waba-account-1" },
+    ]);
+  });
+
+  it("omits businessAccountId when absent", async () => {
+    const transport = new FakeSessionTransport();
+    transport.sessions = [SAMPLE_SESSION];
+    const service = makeService(transport);
+
+    await service.createSession(VALID_INPUT);
     expect(transport.createCalls).toEqual([VALID_INPUT]);
   });
 

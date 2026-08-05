@@ -343,6 +343,9 @@ export class SupabaseTransport
     if (input.displayPhone !== undefined && input.displayPhone !== "") {
       row.display_phone = input.displayPhone;
     }
+    if (input.businessAccountId !== undefined && input.businessAccountId !== "") {
+      row.business_account_id = input.businessAccountId;
+    }
 
     const { data, error } = await this.client
       .from("sessions")
@@ -513,6 +516,7 @@ export class SupabaseTransport
       phoneNumberId: row.phone_number_id as string,
       number: row.number as string,
       displayPhone: row.display_phone as string,
+      businessAccountId: (row.business_account_id as string) ?? "",
       status: row.status as Session["status"],
       whatsappId: (row.whatsapp_id as string | null) ?? null,
       connectedAt: (row.connected_at as string | null) ?? null,

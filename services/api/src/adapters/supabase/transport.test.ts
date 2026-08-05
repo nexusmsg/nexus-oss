@@ -169,6 +169,71 @@ describe("SupabaseTransport.poll", () => {
   });
 });
 
+describe("SupabaseTransport.createSession", () => {
+  it("inserts business_account_id when provided", async () => {
+    const { client, log } = createFakeSupabase([
+      { data: { serial: "serial-1" }, error: null },
+    ]);
+    const transport = new SupabaseTransport(client);
+
+    await transport.createSession({
+      phoneNumberId: "12345",
+      number: "62812345678",
+      businessAccountId: "waba-account-1",
+    });
+
+    expect(log[0].op).toBe("insert");
+    expect(log[0].row).toMatchObject({
+      phone_number_id: "12345",
+      number: "62812345678",
+      business_account_id: "waba-account-1",
+    });
+  });
+
+  it("omits business_account_id from the insert when empty", async () => {
+    const { client, log } = createFakeSupabase([
+      { data: { serial: "serial-1" }, error: null },
+    ]);
+    const transport = new SupabaseTransport(client);
+
+    await transport.createSession({
+      phoneNumberId: "12345",
+      number: "62812345678",
+      businessAccountId: "",
+    });
+
+    expect(log[0].row).toEqual({
+      phone_number_id: "12345",
+      number: "62812345678",
+    });
+  });
+
+  it("maps business_account_id to businessAccountId, defaulting to empty", async () => {
+    const { client } = createFakeSupabase([
+      {
+        data: {
+          id: 1,
+          serial: "serial-1",
+          phone_number_id: "12345",
+          number: "62812345678",
+          display_phone: "",
+          status: "created",
+          whatsapp_id: null,
+          connected_at: null,
+          last_seen_at: null,
+          logged_out_at: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        error: null,
+      },
+    ]);
+    const transport = new SupabaseTransport(client);
+
+    const session = await transport.getSession("serial-1");
+    expect(session?.businessAccountId).toBe("");
+  });
+});
+
 describe("SupabaseTransport.getWebhookConfig", () => {
   it("maps the webhook config row", async () => {
     const { client, log } = createFakeSupabase([

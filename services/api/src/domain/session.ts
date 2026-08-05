@@ -20,6 +20,7 @@ export interface Session {
   phoneNumberId: string;
   number: string;
   displayPhone: string;
+  businessAccountId: string;
   status: SessionStatus;
   whatsappId: string | null;
   connectedAt: string | null;
@@ -42,4 +43,5 @@ export interface CreateSessionInput {
   phoneNumberId: string;
   number: string;
   displayPhone?: string;
+  businessAccountId?: string;
 }
