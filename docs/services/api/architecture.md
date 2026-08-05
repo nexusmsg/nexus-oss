@@ -53,11 +53,29 @@ HTTP client ──► adapters/http (Hono app, auth)
 
 ## Auth model
 
-- `API_AUTH_TOKEN` (Bearer) on public WABA routes; empty string disables auth.
+- `API_AUTH_TOKEN` on public WABA routes (`/:phone_number_id/messages`) and
+  `/api/v1/*`; accepted as `Authorization: Bearer <token>` **or**
+  `Authorization: Basic base64(<user>:<token>)` against the same secret
+  (`adapters/http/auth.ts`). Username free-form; password must equal the
+  token. Bearer takes precedence when both schemes are present. Empty string
+  disables auth for both.
+- Auth failures return `401` with `WWW-Authenticate: Basic realm="nexus"` so
+  browser-native Basic Auth (and reverse proxies) can drive the prompt.
 - `INTERNAL_TOKEN` (Bearer) on `/internal/*` routes; empty string disables
   them (logged at app creation).
 - Dev keys are HS256 JWTs (`{"role":"postgres"}`) signed with
   `PGRST_JWT_SECRET` — PostgREST rejects plain-string bearer tokens (PGRST301).
+
+## CORS
+
+- `/api/v1/*` uses Hono's built-in `cors` middleware, registered on the
+  `apiV1` sub-router **before** the auth guard (Hono runs middleware in
+  registration order; after the sub-router mount it would only fire for
+  OPTIONS). Configured from `CORS_ORIGINS` (comma-separated allow-list;
+  default `http://localhost:5173`; empty → middleware not registered). Allows
+  methods `GET/POST/PATCH/DELETE/OPTIONS` and headers `Authorization`,
+  `Content-Type`; credentials disabled (Basic travels as a header, not a
+  cookie).
 
 ## Error envelope
 

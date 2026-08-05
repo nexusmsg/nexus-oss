@@ -8,11 +8,16 @@ Base URL: `{{base_url}}` (default `http://localhost:3000`).
 |--------|------|-------------|
 | GET | `/` | `{"ok": true, "service": "api"}` |
 
-## Public WABA surface (Bearer `API_AUTH_TOKEN`)
+## Public WABA surface (auth: Bearer or Basic `API_AUTH_TOKEN`)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/:phone_number_id/messages` | Send message: enqueue + poll → WABA envelope with `wamid`, or WABA error (504 on timeout) |
+
+Auth accepts `Authorization: Bearer <API_AUTH_TOKEN>` or
+`Authorization: Basic base64(<user>:<API_AUTH_TOKEN>)` against the same
+secret; failures return `401` with `WWW-Authenticate: Basic realm="nexus"`.
+Empty `API_AUTH_TOKEN` disables auth for both schemes.
 
 ## Session lifecycle (`/api/v1`)
 
@@ -34,14 +39,22 @@ Session JSON shape: `id` (serial), `phone_number_id`, `number`,
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/webhooks` | Create config; body `{ phone_number_id, webhook_url, webhook_secret?, max_retries?, retry_delay_ms?, timeout_ms?, enabled? }` → 201 (duplicate phone → 400 code 100) |
+| POST | `/webhooks` | Create config; body `{ phone_number_id, webhook_url, webhook_secret? }` → 201 (duplicate phone → 400 code 100). Retry/timeout/enabled are **PATCH-only** — silently ignored on POST |
 | GET | `/webhooks` | List configs |
 | GET | `/webhooks/:serial` | Get config |
-| PATCH | `/webhooks/:serial` | Patch retry policy fields |
+| PATCH | `/webhooks/:serial` | Patch `{ webhook_url?, webhook_secret?, enabled?, max_retries?, retry_delay_ms?, timeout_ms? }` |
 | DELETE | `/webhooks/:serial` | Soft delete → 200 `{ ok }` (404 afterwards) |
 | GET | `/webhooks/:serial/subscriptions` | List subscriptions (default `["messages"]`) |
 | POST | `/webhooks/:serial/subscriptions` | Add subscription; body `{ event_type }` → 201 (idempotent) |
 | DELETE | `/webhooks/:serial/subscriptions/:eventType` | Remove subscription → 200 `{ ok }` |
+
+## CORS
+
+`/api/v1/*` answers cross-origin browser calls (the dashboard calls the API
+directly, no proxy). Allow-list from `CORS_ORIGINS` (comma-separated; default
+`http://localhost:5173`; empty → CORS off). Methods
+`GET/POST/PATCH/DELETE/OPTIONS`; headers `Authorization`, `Content-Type`; no
+credentials.
 
 ## Internal worker-facing routes (Bearer `INTERNAL_TOKEN`)
 
