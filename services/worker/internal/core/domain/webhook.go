@@ -47,7 +47,14 @@ type Message struct {
 	Reaction    *Reaction       `json:"reaction,omitempty"`
 	Interactive *Interactive    `json:"interactive,omitempty"`
 	Contacts    []ContactObject `json:"contacts,omitempty"`
+	System      *SystemMessage  `json:"system,omitempty"`
 	Context     *MessageContext `json:"context,omitempty"`
+}
+
+type SystemMessage struct {
+	Body string `json:"body"`
+	WaID string `json:"wa_id"`
+	Type string `json:"type"`
 }
 
 type Text struct {

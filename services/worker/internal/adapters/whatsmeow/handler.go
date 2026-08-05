@@ -2,6 +2,7 @@ package whatsmeow
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -61,6 +63,20 @@ func (h *Handler) handleMessage(ctx context.Context, evt *events.Message) {
 		return
 	}
 
+	// SourceWebMsg is dropped by UnwrapRaw for stub messages, so detect phone
+	// number changes before unwrapping.
+	if evt.SourceWebMsg != nil {
+		stubType := evt.SourceWebMsg.GetMessageStubType()
+		if stubType == waWeb.WebMessageInfo_INDIVIDUAL_CHANGE_NUMBER ||
+			stubType == waWeb.WebMessageInfo_GROUP_PARTICIPANT_CHANGE_NUMBER {
+			params := evt.SourceWebMsg.GetMessageStubParameters()
+			if len(params) > 0 && params[0] != "" {
+				h.handlePhoneChange(ctx, evt, params[0])
+				return
+			}
+		}
+	}
+
 	evt = evt.UnwrapRaw()
 	if evt == nil || evt.Message == nil {
 		return
@@ -78,6 +94,39 @@ func (h *Handler) handleMessage(ctx context.Context, evt *events.Message) {
 	err := h.messageService.Inbound(ctx, &event)
 	if err != nil {
 		h.logger.Printf("handle inbound message: %v", err)
+	}
+}
+
+// handlePhoneChange translates a number-change stub message into a WABA
+// system message event. newPhone comes from SourceWebMsg.MessageStubParameters.
+func (h *Handler) handlePhoneChange(ctx context.Context, evt *events.Message, newPhone string) {
+	oldPhone := evt.Info.Sender.User
+	pushName := evt.Info.PushName
+	if pn := evt.SourceWebMsg.GetPushName(); pn != "" {
+		pushName = pn
+	}
+
+	event := domain.InboundEvent{
+		BusinessAccountID:  h.businessAccountID,
+		IsFromMe:           evt.Info.IsFromMe,
+		DisplayPhoneNumber: h.displayPhone,
+		PhoneNumberID:      h.phoneNumberID,
+		ProfileName:        pushName,
+		WhatsAppID:         oldPhone,
+		Message: domain.MessageEvent{
+			From:      oldPhone,
+			ID:        string(evt.Info.ID),
+			Timestamp: strconv.FormatInt(evt.Info.Timestamp.Unix(), 10),
+			Type:      domain.MessageEventTypeSystem,
+			System: &domain.SystemEvent{
+				Type: domain.SystemEventTypeUserChangedNumber,
+				Body: fmt.Sprintf("User %s changed from %s to %s", pushName, oldPhone, newPhone),
+				WaID: newPhone,
+			},
+		},
+	}
+	if err := h.messageService.Inbound(ctx, &event); err != nil {
+		h.logger.Printf("handle phone change: %v", err)
 	}
 }
 

@@ -156,6 +156,14 @@ func mapMessage(message domain.MessageEvent) domain.Message {
 			contacts = append(contacts, mapContactEvent(c))
 		}
 		result.Contacts = contacts
+	case domain.MessageEventTypeSystem:
+		if message.System != nil {
+			result.System = &domain.SystemMessage{
+				Body: message.System.Body,
+				WaID: message.System.WaID,
+				Type: message.System.Type,
+			}
+		}
 	}
 
 	if message.Context != nil {

@@ -7,6 +7,11 @@ const (
 	MessageEventTypeReaction    MessageEventType = "reaction"
 	MessageEventTypeInteractive MessageEventType = "interactive"
 	MessageEventTypeContacts    MessageEventType = "contacts"
+	MessageEventTypeSystem      MessageEventType = "system"
+)
+
+const (
+	SystemEventTypeUserChangedNumber = "user_changed_number"
 )
 
 type MessageEventType string
@@ -21,7 +26,14 @@ type MessageEvent struct {
 	Reaction    *ReactionEvent
 	Interactive *InteractiveEvent
 	Contacts    []ContactEvent
+	System      *SystemEvent
 	Context     *ContextEvent
+}
+
+type SystemEvent struct {
+	Type string // "user_changed_number"
+	Body string // human-readable
+	WaID string // new phone number
 }
 
 type LocationEvent struct {

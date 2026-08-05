@@ -1,16 +1,32 @@
 package whatsmeow
 
 import (
+	"context"
+	"log"
 	"testing"
 	"time"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
+
+type fakeMessageService struct {
+	events []*domain.InboundEvent
+	err    error
+}
+
+func (f *fakeMessageService) Inbound(_ context.Context, evt *domain.InboundEvent) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.events = append(f.events, evt)
+	return nil
+}
 
 func TestMapMessage(t *testing.T) {
 	text := "hello"
@@ -101,4 +117,113 @@ func TestMapMessage(t *testing.T) {
 		})
 	}
 
+}
+
+func TestHandlerDetectsNumberChangeStub(t *testing.T) {
+	tests := []struct {
+		name     string
+		stubType waWeb.WebMessageInfo_StubType
+	}{
+		{name: "individual", stubType: waWeb.WebMessageInfo_INDIVIDUAL_CHANGE_NUMBER},
+		{name: "group", stubType: waWeb.WebMessageInfo_GROUP_PARTICIPANT_CHANGE_NUMBER},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &fakeMessageService{}
+			handler := NewHandler(svc, "business-123", "phone-123", "+628123456789", log.Default())
+
+			handler.Handle(context.Background())(&events.Message{
+				Info: types.MessageInfo{
+					ID:        "stub-123",
+					Timestamp: time.Unix(1700000000, 0),
+					PushName:  "Alice",
+					MessageSource: types.MessageSource{
+						Sender: types.JID{User: "628111111111"},
+					},
+				},
+				SourceWebMsg: &waWeb.WebMessageInfo{
+					MessageStubType:       &tt.stubType,
+					MessageStubParameters: []string{"628222222222"},
+				},
+			})
+
+			if len(svc.events) != 1 {
+				t.Fatalf("Inbound calls = %d, want 1", len(svc.events))
+			}
+			evt := svc.events[0]
+			if evt.Message.Type != domain.MessageEventTypeSystem {
+				t.Fatalf("type = %q, want system", evt.Message.Type)
+			}
+			if evt.Message.System == nil {
+				t.Fatal("system = nil")
+			}
+			if evt.Message.System.Type != domain.SystemEventTypeUserChangedNumber {
+				t.Errorf("system.type = %q", evt.Message.System.Type)
+			}
+			if evt.Message.System.WaID != "628222222222" {
+				t.Errorf("system.wa_id = %q, want new phone", evt.Message.System.WaID)
+			}
+			if evt.Message.System.Body != "User Alice changed from 628111111111 to 628222222222" {
+				t.Errorf("system.body = %q", evt.Message.System.Body)
+			}
+			if evt.Message.From != "628111111111" {
+				t.Errorf("from = %q, want old phone", evt.Message.From)
+			}
+			if evt.ProfileName != "Alice" || evt.WhatsAppID != "628111111111" {
+				t.Errorf("contact = %+v", evt)
+			}
+		})
+	}
+}
+
+func TestHandlerIgnoresChangeNumberStubWithoutNewNumber(t *testing.T) {
+	svc := &fakeMessageService{}
+	handler := NewHandler(svc, "", "", "", log.Default())
+
+	stubType := waWeb.WebMessageInfo_INDIVIDUAL_CHANGE_NUMBER
+	handler.Handle(context.Background())(&events.Message{
+		Info: types.MessageInfo{
+			ID: "stub-123",
+			MessageSource: types.MessageSource{
+				Sender: types.JID{User: "628111111111"},
+			},
+		},
+		SourceWebMsg: &waWeb.WebMessageInfo{
+			MessageStubType: &stubType,
+		},
+	})
+
+	if len(svc.events) != 0 {
+		t.Fatalf("Inbound calls = %d, want 0", len(svc.events))
+	}
+}
+
+func TestHandlerTreatsNonChangeStubAsRegularMessage(t *testing.T) {
+	svc := &fakeMessageService{}
+	handler := NewHandler(svc, "", "", "", log.Default())
+
+	text := "hello"
+	stubType := waWeb.WebMessageInfo_GROUP_CHANGE_SUBJECT
+	raw := &waE2E.Message{Conversation: &text}
+	handler.Handle(context.Background())(&events.Message{
+		Info: types.MessageInfo{
+			ID: "msg-123",
+			MessageSource: types.MessageSource{
+				Sender: types.JID{User: "628111111111"},
+			},
+		},
+		SourceWebMsg: &waWeb.WebMessageInfo{
+			MessageStubType: &stubType,
+		},
+		Message:    raw,
+		RawMessage: raw,
+	})
+
+	if len(svc.events) != 1 {
+		t.Fatalf("Inbound calls = %d, want 1", len(svc.events))
+	}
+	if svc.events[0].Message.Type != domain.MessageEventTypeText {
+		t.Fatalf("type = %q, want text", svc.events[0].Message.Type)
+	}
 }

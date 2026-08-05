@@ -66,6 +66,7 @@ The goal is to make a WhatsMeow-based gateway behave as a drop-in replacement fo
 | interactive | ListResponseMessage                   |
 | interactive | InteractiveResponseMessage            |
 | poll        | PollCreationMessage                   |
+| system      | INDIVIDUAL_CHANGE_NUMBER / GROUP_PARTICIPANT_CHANGE_NUMBER stub types |
 | unsupported | Unknown message                       |
 
 ---
@@ -186,6 +187,29 @@ The goal is to make a WhatsMeow-based gateway behave as a drop-in replacement fo
 For `ContactsArrayMessage` (multi-contact), each contact is parsed independently. The outer `displayName` has no WABA equivalent and is dropped.
 
 Outbound: WABA `contacts[]` array → vCard strings → `ContactMessage` (single) or `ContactsArrayMessage` (multiple).
+
+---
+
+# System Message
+
+## User Changed Number
+
+| WABA | WhatsMeow |
+|---|---|
+| system.type | Constant `"user_changed_number"` |
+| system.body | `"User " + pushName + " changed from " + oldPn + " to " + newPn` |
+| system.wa_id | New phone number from `SourceWebMsg.MessageStubParameters[0]` |
+
+Detected from WhatsMeow stub types:
+- `INDIVIDUAL_CHANGE_NUMBER` (42) — 1:1 chat participant changed number
+- `GROUP_PARTICIPANT_CHANGE_NUMBER` (33) — group participant changed number
+
+| WABA Field | Source |
+|---|---|
+| messages[].from | OLD phone number (`evt.Info.Sender.User`) |
+| messages[].system.wa_id | NEW phone number (`SourceWebMsg.MessageStubParameters[0]`) |
+| messages[].system.type | `"user_changed_number"` |
+| messages[].system.body | Human-readable description |
 
 ---
 

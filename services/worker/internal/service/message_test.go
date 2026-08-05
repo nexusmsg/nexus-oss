@@ -252,6 +252,22 @@ func TestMapMessageLocationReactionAndInteractive(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "system",
+			event: domain.MessageEvent{
+				Type: domain.MessageEventTypeSystem,
+				System: &domain.SystemEvent{
+					Type: domain.SystemEventTypeUserChangedNumber,
+					Body: "User Alice changed from 628111111111 to 628222222222",
+					WaID: "628222222222",
+				},
+			},
+			check: func(t *testing.T, message domain.Message) {
+				if message.System == nil || message.System.Type != domain.SystemEventTypeUserChangedNumber || message.System.WaID != "628222222222" {
+					t.Errorf("system = %+v", message.System)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -301,6 +317,22 @@ func TestMessageInboundLogsTypedPayloads(t *testing.T) {
 			check: func(t *testing.T, message domain.Message) {
 				if message.Context == nil || message.Context.From != "628123" {
 					t.Errorf("context = %+v", message.Context)
+				}
+			},
+		},
+		{
+			name: "system",
+			event: domain.MessageEvent{
+				Type: domain.MessageEventTypeSystem,
+				System: &domain.SystemEvent{
+					Type: domain.SystemEventTypeUserChangedNumber,
+					Body: "User Alice changed from 628111111111 to 628222222222",
+					WaID: "628222222222",
+				},
+			},
+			check: func(t *testing.T, message domain.Message) {
+				if message.System == nil || message.System.Type != domain.SystemEventTypeUserChangedNumber || message.System.WaID != "628222222222" {
+					t.Errorf("system = %+v", message.System)
 				}
 			},
 		},
