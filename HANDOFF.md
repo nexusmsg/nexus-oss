@@ -362,6 +362,10 @@ The frontend area now has its first app — the **Nexus developer portal**:
 - New docs: `docs/apps/README.md` (app index), `docs/README.md` apps rows
   updated, `docs/services/api/configuration.md` gains `CORS_ORIGINS` + auth
   notes. Plan: `.opencode/plans/dashboard.md` (M1 marked completed).
+- Stale API docs fixed (commit `82d608b`): `docs/services/api/endpoints.md` +
+  `docs/services/api/architecture.md` now document Bearer-or-Basic auth with
+  `WWW-Authenticate: Basic realm="nexus"`, the `/api/v1/*` CORS section, and
+  that retry/timeout/enabled fields are PATCH-only on webhooks.
 - API-keys page is **frontend-first** (empty state; backend = B1). Webhook
   delivery log = empty state (no endpoint, B3); Test button disabled (B6);
   Verify Token omitted (B4). Session Delete/Disconnect render disabled
