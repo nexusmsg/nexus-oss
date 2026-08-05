@@ -125,8 +125,9 @@ Outbound job
 - Supported mappings currently include conversation text, extended text,
   location, reaction, button reply, list reply, and message context.
 - Self-sent messages (`IsFromMe`) are ignored.
-- WABA payload metadata comes from `BUSINESS_ACCOUNT_ID` (global) and per-device
-  `phone_number_id` + display number from `WABA_DEVICES`.
+- WABA payload metadata comes from `BUSINESS_ACCOUNT_ID` (global fallback) and
+  per-device `phone_number_id` + display number provisioned from the `sessions`
+  table.
 - The service logs the final JSON payload before forwarding it.
 - Forwarding uses HTTP POST with `Content-Type: application/json`.
 - The webhook URL/secret come from the API (`apiconfig` provider, per-ID TTL
@@ -154,7 +155,7 @@ Set these environment variables before running:
 
 ```bash
 BUSINESS_ACCOUNT_ID="your-business-account-id"
-WABA_DEVICES="1001:628123456789,1002:628987654321"   # phone_number_id:number pairs
+# Devices are provisioned from the sessions table (no static list).
 API_URL="http://localhost:3000"
 INTERNAL_TOKEN="matches-api-INTERNAL_TOKEN"
 POLL_INTERVAL="1s"          # queue poll interval (default 1s)
@@ -171,8 +172,9 @@ Run the application with:
 go run ./cmd
 ```
 
-`WABA_DEVICES` is a comma-separated list of `phone_number_id:number` pairs; the
-display phone defaults to the number. Malformed entries fail startup. The
+Devices are provisioned from the `sessions` table: each stored session is
+boot-synced into a device and QR pairing re-provisions on demand. The display
+phone defaults to the session's number. The
 worker no longer reads `PORT`, `API_AUTH_TOKEN`, `PHONE_NUMBER_ID`,
 `DISPLAY_PHONE_NUMBER`, `WEBHOOK_URL`, or `WEBHOOK_SECRET` — webhook
 destinations now come from the API's internal webhook-config endpoint.
@@ -195,8 +197,8 @@ destinations now come from the API's internal webhook-config endpoint.
   invented.
 - `entry[].id` comes from `BUSINESS_ACCOUNT_ID`; it cannot be derived from a
   normal WhatsApp sender number.
-- `config` stays dependency-free: `WABA_DEVICES` parses into `config.Device`;
-  `cmd/main.go` maps it to `whatsmeow.DeviceSpec`.
+- `config` stays dependency-free: devices are provisioned from the `sessions`
+  table; `cmd/main.go` boot-syncs stored sessions into `whatsmeow.DeviceSpec`.
 
 ## Deferred Work
 

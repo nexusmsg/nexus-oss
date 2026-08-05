@@ -68,9 +68,11 @@ MAX_ATTEMPTS
 API_URL
 INTERNAL_TOKEN
 WEBHOOK_CONFIG_TTL
-WABA_DEVICES — comma-separated phone_number_id:number pairs,
-  e.g. WABA_DEVICES=1001:628123456789,1002:628987654321
 ```
+Devices are provisioned dynamically from the `sessions` table (the worker
+boot-syncs a device per stored session and re-provisions on QR pairing); each
+session's `business_account_id` overrides the global `BUSINESS_ACCOUNT_ID`
+fallback.
 
 Details, mapping rules, and handoff notes: `HANDOFF.md`,
 `services/worker/docs/api-mapping-webhook.md`, `services/worker/AGENTS.md`.
@@ -98,9 +100,9 @@ API configuration (env): `PORT`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 
 1. `docker compose up --build -d` from the repo root (Postgres, PostgREST,
    migrations, API, worker).
-2. Configure devices in `.env` and recreate the API + worker:
+2. Provision devices in the `sessions` table (via the API) and recreate the
+   API + worker:
    ```bash
-   echo "WABA_DEVICES=1001:628123456789" >> .env   # phone_number_id:number pairs
    docker compose up -d --force-recreate api worker
    ```
 3. Link WhatsApp: watch the worker logs
