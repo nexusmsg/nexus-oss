@@ -12,7 +12,9 @@
  *   TEST_SUPABASE_SERVICE_ROLE_KEY=<dev-jwt> \
  *   npx vitest run src/adapters/http/app.integration.test.ts
  *
- * Requires migrations 000003 + 000004 applied and PostgREST schema reloaded.
+ * Requires all migrations applied (000001–000005: jobs, webhook_configs,
+ * sessions incl. business_account_id, webhook management) and PostgREST schema
+ * reloaded.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -117,25 +119,40 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
 
   describe("session lifecycle", () => {
     const phone = `${PREFIX}sess`;
+    const businessAccountId = `${PREFIX}waba`;
     let serial = "";
 
     it("creates a session", async () => {
       const res = await req("/api/v1/sessions", {
         method: "POST",
-        body: { phone_number_id: phone, number: "628123456789" },
+        body: {
+          phone_number_id: phone,
+          number: "628123456789",
+          business_account_id: businessAccountId,
+        },
       });
       expect(res.status).toBe(201);
-      const body = (await res.json()) as { id: string; status: string; phone_number_id: string };
+      const body = (await res.json()) as {
+        id: string;
+        status: string;
+        phone_number_id: string;
+        business_account_id: string;
+      };
       expect(body.id).toBeTruthy();
       expect(body.status).toBe("created");
       expect(body.phone_number_id).toBe(phone);
+      expect(body.business_account_id).toBe(businessAccountId);
       serial = body.id;
     });
 
     it("is idempotent when re-creating the same phone number", async () => {
       const res = await req("/api/v1/sessions", {
         method: "POST",
-        body: { phone_number_id: phone, number: "628123456789" },
+        body: {
+          phone_number_id: phone,
+          number: "628123456789",
+          business_account_id: businessAccountId,
+        },
       });
       expect(res.status).toBe(201);
       const body = (await res.json()) as { id: string };
@@ -155,9 +172,14 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
     it("fetches the session by serial", async () => {
       const res = await req(`/api/v1/sessions/${serial}`);
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { id: string; status: string };
+      const body = (await res.json()) as {
+        id: string;
+        status: string;
+        business_account_id: string;
+      };
       expect(body.id).toBe(serial);
       expect(body.status).toBe("created");
+      expect(body.business_account_id).toBe(businessAccountId);
     });
 
     it("lists sessions including the created one", async () => {
