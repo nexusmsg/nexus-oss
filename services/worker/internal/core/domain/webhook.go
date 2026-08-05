@@ -46,6 +46,7 @@ type Message struct {
 	Location    *Location       `json:"location,omitempty"`
 	Reaction    *Reaction       `json:"reaction,omitempty"`
 	Interactive *Interactive    `json:"interactive,omitempty"`
+	Contacts    []ContactObject `json:"contacts,omitempty"`
 	Context     *MessageContext `json:"context,omitempty"`
 }
 
@@ -92,4 +93,56 @@ type Status struct {
 	Status      string `json:"status"`
 	Timestamp   string `json:"timestamp"`
 	RecipientID string `json:"recipient_id"`
+}
+
+// WABA ContactObject types — used in inbound webhook payloads and outbound jobs.
+
+type ContactObject struct {
+	Addresses []AddressObject `json:"addresses,omitempty"`
+	Birthday  string          `json:"birthday,omitempty"`
+	Emails    []EmailObject   `json:"emails,omitempty"`
+	Name      NameObject      `json:"name"`
+	Org       OrgObject       `json:"org,omitempty"`
+	Phones    []PhoneObject   `json:"phones,omitempty"`
+	URLs      []URLObject     `json:"urls,omitempty"`
+}
+
+type NameObject struct {
+	FormattedName string `json:"formatted_name"`
+	FirstName     string `json:"first_name,omitempty"`
+	LastName      string `json:"last_name,omitempty"`
+	MiddleName    string `json:"middle_name,omitempty"`
+	Prefix        string `json:"prefix,omitempty"`
+	Suffix        string `json:"suffix,omitempty"`
+}
+
+type PhoneObject struct {
+	Phone string `json:"phone"`
+	Type  string `json:"type,omitempty"`
+	WaID  string `json:"wa_id,omitempty"`
+}
+
+type EmailObject struct {
+	Email string `json:"email"`
+	Type  string `json:"type,omitempty"`
+}
+
+type AddressObject struct {
+	Street      string `json:"street,omitempty"`
+	City        string `json:"city,omitempty"`
+	State       string `json:"state,omitempty"`
+	Zip         string `json:"zip,omitempty"`
+	Country     string `json:"country,omitempty"`
+	CountryCode string `json:"country_code,omitempty"`
+}
+
+type OrgObject struct {
+	Company    string `json:"company,omitempty"`
+	Department string `json:"department,omitempty"`
+	Title      string `json:"title,omitempty"`
+}
+
+type URLObject struct {
+	URL  string `json:"url"`
+	Type string `json:"type,omitempty"`
 }

@@ -157,11 +157,35 @@ The goal is to make a WhatsMeow-based gateway behave as a drop-in replacement fo
 
 # Contact Message
 
-| WABA     | WhatsMeow                             |
-| -------- | ------------------------------------- |
-| contacts | ContactMessage / ContactsArrayMessage |
+| WABA | WhatsMeow | Notes |
+|---|---|---|
+| contacts[].name.formatted_name | vCard `FN` property | Fallback to `ContactMessage.DisplayName` if `FN` is empty |
+| contacts[].name.first_name | vCard `N` given-name component | |
+| contacts[].name.last_name | vCard `N` family-name component | |
+| contacts[].name.middle_name | vCard `N` additional-name component | |
+| contacts[].name.prefix | vCard `N` prefix component | |
+| contacts[].name.suffix | vCard `N` suffix component | |
+| contacts[].phones[].phone | vCard `TEL` value | |
+| contacts[].phones[].type | vCard `TEL` TYPE param | CELL/MOBILE → `"HOME"`, WORK → `"WORK"`, default → `"HOME"` |
+| contacts[].phones[].wa_id | Populated via `IsOnWhatsApp` lookup | Internal only; not exposed as API endpoint |
+| contacts[].emails[].email | vCard `EMAIL` value | |
+| contacts[].emails[].type | vCard `EMAIL` TYPE param | |
+| contacts[].addresses[].street | vCard `ADR` street component | |
+| contacts[].addresses[].city | vCard `ADR` locality component | |
+| contacts[].addresses[].state | vCard `ADR` region component | |
+| contacts[].addresses[].zip | vCard `ADR` postal-code component | |
+| contacts[].addresses[].country | vCard `ADR` country-name component | |
+| contacts[].addresses[].country_code | Not available in vCard | Omitted |
+| contacts[].org.company | vCard `ORG` first component | |
+| contacts[].org.department | vCard `ORG` second component | |
+| contacts[].org.title | vCard `TITLE` | |
+| contacts[].urls[].url | vCard `URL` value | |
+| contacts[].urls[].type | vCard `URL` TYPE param | |
+| contacts[].birthday | vCard `BDAY` | Normalized to `YYYY-MM-DD` |
 
-The VCard should be parsed into the WABA Contact Object.
+For `ContactsArrayMessage` (multi-contact), each contact is parsed independently. The outer `displayName` has no WABA equivalent and is dropped.
+
+Outbound: WABA `contacts[]` array → vCard strings → `ContactMessage` (single) or `ContactsArrayMessage` (multiple).
 
 ---
 
@@ -324,3 +348,40 @@ Stream Binary
 ```
 
 This flow closely mirrors the behavior of the WhatsApp Business Platform Cloud API while hiding all WhatsMeow-specific implementation details such as `DirectPath`, `MediaKey`, and encrypted media handling.
+
+---
+
+# Replication Limits
+
+The gateway replicates what WhatsMeow can provide via the WhatsApp device protocol. Not every WABA Cloud API feature has an equivalent in the unofficial protocol. The table below documents known gaps and the reasoning behind each decision.
+
+## Cannot Replicate (No Hybrid Approach)
+
+The gateway does **not** fall back to the official Cloud API for writes. Everything must be achievable through the WhatsApp device protocol alone.
+
+| WABA Feature | Why Not Possible | Gateway Behavior |
+|---|---|---|
+| **Business Profile CRUD** (write `about`, `description`, `email`, `address`, `websites`, `vertical`, `profile_picture`) | WhatsMeow only has `GetBusinessProfile` (read-only IQ `w:biz`). No public `set` variant exists in whatsmeow or Baileys. The GraphQL mutation (`WAWebEditBizProfileMutation`) requires Meta auth (FB/IG session), not the device session, and is undocumented with ban risk. Fields like `vertical`, `business_hours`, and `categories` have no unofficial write path at all. | Read-only via `GetBusinessProfile`. Writes must be done through Meta Business Suite or the official Cloud API. |
+| **REQUEST_CONTACT_INFO button** (send) | Button layer is WABA-only. WhatsMeow has no API to send interactive buttons with `request_contact_info` action. | Cannot send. Can **receive** the result as a normal `contacts` message with `origin: "contact_request"`. |
+| **Contact Book API** (BSUID management) | Meta-hosted identity table. Not accessible via the device protocol. Only available through the Cloud API (`GET/POST/DELETE /{phone-number-id}/contact_book`). | Not replicated. BSUID support will be handled when the outbound message API accepts `recipient` fields (phone or BSUID). |
+| **smb_app_state_sync webhook** (business customer address book) | Tied to the SMB embedded-signup flow and solution-partner onboarding. The WhatsMeow contact app-state patch (`WAPatchCriticalUnblockLow`) is the **user's own** phone address book, not the business customer's WA Business app address book. | Not emitted. The semantic is different — translating it would produce misleading `smb_app_state_sync` events. |
+| **Phone → JID lookup** (`IsOnWhatsApp`) | WABA has no public equivalent endpoint. This is a WhatsApp device protocol feature only. | Available internally for contact card `wa_id` resolution, but not exposed as a gateway API endpoint. |
+| **Block list** (`GetBlocklist` / `UpdateBlocklist`) | WABA does not expose block management via its API. Managed in the WA Business app. | Available internally but not exposed as a gateway API endpoint. |
+| **Contact QR / Business Message Links** (`GetContactQRLink`, `ResolveBusinessMessageLink`) | WABA has no concept of `wa.me/qr/...` or `wa.me/message/...` links. | Available internally but not exposed as a gateway API endpoint. |
+
+## Partially Replicable
+
+| WABA Feature | WhatsMeow Equivalent | Gap | Gateway Behavior |
+|---|---|---|---|
+| **Contact Message (vCard)** | `ContactMessage` / `ContactsArrayMessage` (raw vCard string) | WABA pre-parses vCard into structured `ContactObject` (name, phones, emails, addresses, org, urls, birthday); WhatsMeow hands you a raw vCard blob. | vCard will be parsed into WABA `ContactObject` shape on receive. The `phones[].wa_id` field requires an `IsOnWhatsApp` lookup to populate (internal only). |
+| **Push Name / Business Name** | `events.PushName` / `events.BusinessName` from inbound message metadata | WABA surfaces `profile.name` on every webhook message; WM only emits events on first sighting or name change. | Mapped via `evt.Info.PushName` on the base contact object. Consistent with existing `api-mapping-webhook.md` contact table. |
+| **Identity Key Hash** | `events.IdentityChange` (carries JID + timestamp) | WABA provides `identity_key_hash` in contact webhook when identity-change check is enabled; WM does not expose a hash. | Field omitted from webhook payload. |
+
+## Design Principle
+
+When a WABA feature has no WhatsMeow equivalent:
+
+1. **Omit** the field rather than inventing a value.
+2. **Document** the gap in this file.
+3. **Do not** implement a hybrid approach (calling the official Cloud API for writes). The gateway is a drop-in replacement via the device protocol only.
+4. If a feature becomes critical for a customer, evaluate whether to add a **separate** admin API or document that it must be done through Meta Business Suite.

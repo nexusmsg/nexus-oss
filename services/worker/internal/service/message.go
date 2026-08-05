@@ -150,6 +150,12 @@ func mapMessage(message domain.MessageEvent) domain.Message {
 				}
 			}
 		}
+	case domain.MessageEventTypeContacts:
+		contacts := make([]domain.ContactObject, 0, len(message.Contacts))
+		for _, c := range message.Contacts {
+			contacts = append(contacts, mapContactEvent(c))
+		}
+		result.Contacts = contacts
 	}
 
 	if message.Context != nil {
@@ -160,4 +166,53 @@ func mapMessage(message domain.MessageEvent) domain.Message {
 	}
 
 	return result
+}
+
+func mapContactEvent(c domain.ContactEvent) domain.ContactObject {
+	obj := domain.ContactObject{
+		Birthday: c.Birthday,
+		Name: domain.NameObject{
+			FormattedName: c.Name.FormattedName,
+			FirstName:     c.Name.FirstName,
+			LastName:      c.Name.LastName,
+			MiddleName:    c.Name.MiddleName,
+			Prefix:        c.Name.Prefix,
+			Suffix:        c.Name.Suffix,
+		},
+		Org: domain.OrgObject{
+			Company:    c.Org.Company,
+			Department: c.Org.Department,
+			Title:      c.Org.Title,
+		},
+	}
+	for _, p := range c.Phones {
+		obj.Phones = append(obj.Phones, domain.PhoneObject{
+			Phone: p.Phone,
+			Type:  p.Type,
+			WaID:  p.WaID,
+		})
+	}
+	for _, e := range c.Emails {
+		obj.Emails = append(obj.Emails, domain.EmailObject{
+			Email: e.Email,
+			Type:  e.Type,
+		})
+	}
+	for _, a := range c.Addresses {
+		obj.Addresses = append(obj.Addresses, domain.AddressObject{
+			Street:      a.Street,
+			City:        a.City,
+			State:       a.State,
+			Zip:         a.Zip,
+			Country:     a.Country,
+			CountryCode: a.CountryCode,
+		})
+	}
+	for _, u := range c.URLs {
+		obj.URLs = append(obj.URLs, domain.URLObject{
+			URL:  u.URL,
+			Type: u.Type,
+		})
+	}
+	return obj
 }

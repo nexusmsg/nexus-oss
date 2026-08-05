@@ -6,6 +6,7 @@ const (
 	MessageEventTypeLocation    MessageEventType = "location"
 	MessageEventTypeReaction    MessageEventType = "reaction"
 	MessageEventTypeInteractive MessageEventType = "interactive"
+	MessageEventTypeContacts    MessageEventType = "contacts"
 )
 
 type MessageEventType string
@@ -19,6 +20,7 @@ type MessageEvent struct {
 	Location    *LocationEvent
 	Reaction    *ReactionEvent
 	Interactive *InteractiveEvent
+	Contacts    []ContactEvent
 	Context     *ContextEvent
 }
 
@@ -54,6 +56,56 @@ type ListReplyEvent struct {
 type ContextEvent struct {
 	ID   string
 	From string
+}
+
+type ContactEvent struct {
+	Addresses []AddressEvent
+	Birthday  string
+	Emails    []EmailEvent
+	Name      NameEvent
+	Org       OrganizationEvent
+	Phones    []PhoneEvent
+	URLs      []URLEvent
+}
+
+type NameEvent struct {
+	FormattedName string
+	FirstName     string
+	LastName      string
+	MiddleName    string
+	Prefix        string
+	Suffix        string
+}
+
+type PhoneEvent struct {
+	Phone string
+	Type  string
+	WaID  string
+}
+
+type EmailEvent struct {
+	Email string
+	Type  string
+}
+
+type AddressEvent struct {
+	Street      string
+	City        string
+	State       string
+	Zip         string
+	Country     string
+	CountryCode string
+}
+
+type OrganizationEvent struct {
+	Company    string
+	Department string
+	Title      string
+}
+
+type URLEvent struct {
+	URL  string
+	Type string
 }
 
 type InboundEvent struct {

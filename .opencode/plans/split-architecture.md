@@ -394,6 +394,119 @@ it. Two options:
    PostgREST → `@supabase/postgrest-js`; `.eq("deleted_at", null)` → `.is()`
    SQLSTATE 22007); `README.md` + this plan updated; Go checks + API tests pass.
 
+## Contacts Implementation Plan
+
+### Scope
+
+Replicate WABA contact features achievable via the WhatsApp device protocol (no hybrid approach):
+
+1. **Contact Message (vCard)** — inbound receive, parse into WABA ContactObject; outbound send from WABA-shaped payload.
+2. **System Message (user_changed_number)** — detect phone change stub messages, emit WABA `system` webhook, auto-update contact mapping.
+3. **Contact Book API** — CRUD + auto-populate from interactions, stable ID (`nx.<hash>`), compatible with WABA `/contact_book` endpoints.
+
+### M10 — vCard Mapping (Inbound + Outbound)
+
+**Inbound (WhatsMeow → WABA):**
+- Parse raw vCard string from `ContactMessage` / `ContactsArrayMessage` into WABA `ContactObject` shape.
+- Map vCard properties: `FN`→`name.formatted_name`, `N`→`name.*`, `TEL`→`phones[]`, `EMAIL`→`emails[]`, `ADR`→`addresses[]`, `ORG`→`org.*`, `URL`→`urls[]`, `BDAY`→`birthday`.
+- `phones[].wa_id` populated via `IsOnWhatsApp` lookup (internal, not exposed as API).
+- New adapter: `internal/adapters/vcard/` using `github.com/emersion/go-vcard`.
+- Handler (`internal/adapters/whatsmeow/handler.go`) extracts `GetContactMessage()` / `GetContactsArrayMessage()`, delegates to service.
+- Service (`internal/service/message.go`) builds WABA payload with parsed `contacts[]` array.
+
+**Outbound (WABA → WhatsMeow):**
+- API receives `POST /:phone_number_id/messages` with `type: "contacts"` and `contacts[]` array.
+- Worker executor maps `ContactObject[]` → `[]waE2E.ContactMessage` (single) or `waE2E.ContactsArrayMessage` (array).
+- Reverse vCard construction from structured fields.
+- Validation: `name.formatted_name` required, at least one `phones[]` entry.
+
+**Migration:** No new table needed for vCard alone (message-level data, part of existing webhook flow).
+
+### M11 — System Message (user_changed_number)
+
+**Inbound stub detection:**
+- Handler checks `evt.SourceWebMsg.GetMessageStubType()` for `INDIVIDUAL_CHANGE_NUMBER` (42) and `GROUP_PARTICIPANT_CHANGE_NUMBER` (33).
+- Extract: old phone from `evt.Info.Sender.User`, new phone from `MessageStubParameters[0]`.
+- Auto-update contacts table (M12): upsert contact with new phone, mark old phone as migrated.
+
+**Webhook emission:**
+- Build WABA `system` message: `{ "type": "system", "system": { "body": "...", "wa_id": "<new>", "type": "user_changed_number" } }`.
+- Forward via existing webhook flow (apiconfig → HTTP client).
+- For group changes: also include group context in `messages[].context`.
+
+**Doc update:** Split the existing `system.customer_identity_changed` row in `Unsupported Fields` into two rows — one for `user_changed_number` (supported, mapped from stub) and one for `customer_identity_changed` (still unsupported).
+
+### M12 — Contact Book API + Auto-Populate
+
+**Migration (`000006_create_contacts`):**
+```sql
+create table if not exists public.contacts (
+    id              bigserial primary key,
+    serial          uuid not null default gen_random_uuid(),
+    phone_number_id text not null,        -- owner device
+    stable_id       text not null,        -- "nx.<hash>" — our BSUID equivalent
+    phone           text not null,        -- contact's phone number
+    name            jsonb,                -- { formatted_name, first_name, last_name, ... }
+    phones          jsonb,                -- [{ phone, type, wa_id }]
+    emails          jsonb,                -- [{ email, type }]
+    addresses       jsonb,                -- full ADR-derived object
+    org             jsonb,                -- { company, department, title }
+    urls            jsonb,                -- [{ url, type }]
+    birthday        text,                 -- YYYY-MM-DD
+    source          text not null default 'interaction',  -- interaction | manual | number_change
+    last_interaction timestamptz,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now(),
+    deleted_at      timestamptz
+);
+create unique index contacts_stable_id_idx on public.contacts (phone_number_id, stable_id);
+create unique index contacts_phone_unique_idx on public.contacts (phone_number_id, phone) where deleted_at is null;
+```
+
+**API endpoints (in `services/api`):**
+- `GET /:phone_number_id/contacts` — list contacts (filterable, paginated)
+- `GET /:phone_number_id/contacts/:stable_id` — get single contact
+- `POST /:phone_number_id/contacts` — add/update contact (returns `{ stable_id, ... }`)
+- `DELETE /:phone_number_id/contacts?stable_id=...` — remove contact (soft delete)
+- Auth: `API_AUTH_TOKEN` (same as messages endpoint)
+
+**Auto-populate (worker side):**
+- On every inbound message: upsert contact with sender's phone + push name into contacts table.
+- On every outbound message success: upsert contact with recipient's phone.
+- On `user_changed_number` stub: update contact's phone from old → new, log migration event.
+
+**Webhook (`smb_app_state_sync` equivalent):**
+- When a contact is added/updated/removed (manual or auto), emit to configured webhooks for that `phone_number_id`.
+- Shape: `{ "field": "smb_app_state_sync", "value": { "state_sync": [{ "type": "contact", "contact": { ... }, "action": "add"|"remove" }] } }`.
+
+**API response shape (compatible with WABA):**
+```json
+{
+  "data": [
+    {
+      "phone_number_id": "1001",
+      "contact": {
+        "stable_id": "nx.13491208655302741918",
+        "phone": "16505551234",
+        "name": { "formatted_name": "John Doe", "first_name": "John", "last_name": "Doe" },
+        "phones": [{ "phone": "16505551234", "type": "HOME", "wa_id": "16505551234" }],
+        "source": "interaction",
+        "last_interaction": "2026-08-05T10:30:00Z"
+      }
+    }
+  ]
+}
+```
+
+### Milestones (Updated)
+
+7. **M7 — Session lifecycle flows (Completed):** ...
+8. **M8 — Webhook management, Bruno, integration tests (Completed):** ...
+9. **M9 — DeviceManager actor model, sessions table provisioning (Completed):** ...
+10. **M10 — vCard Mapping:** inbound parse (`go-vcard` → ContactObject), outbound construct (ContactObject → vCard), handler + service wiring, tests.
+11. **M11 — System Message:** stub type detection (`INDIVIDUAL_CHANGE_NUMBER`, `GROUP_PARTICIPANT_CHANGE_NUMBER`), WABA `system` webhook emission, contact auto-update on phone change.
+12. **M12 — Contact Book API:** migration `000006`, CRUD endpoints in API, auto-populate in worker, `smb_app_state_sync` webhook emission, integration tests.
+
 ## Acceptance Criteria
 
 - `POST /:phone_number_id/messages` returns **200** with the official WABA

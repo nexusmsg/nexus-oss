@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/vcard"
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -146,6 +147,18 @@ func mapMessage(evt *events.Message) domain.MessageEvent {
 		message.Context = mapContext(list.GetContextInfo())
 		return message
 	}
+	if contact := evt.Message.GetContactMessage(); contact != nil {
+		message.Type = domain.MessageEventTypeContacts
+		message.Contacts = parseContactsMessage(contact)
+		return message
+	}
+	if contactsArray := evt.Message.GetContactsArrayMessage(); contactsArray != nil {
+		message.Type = domain.MessageEventTypeContacts
+		for _, c := range contactsArray.GetContacts() {
+			message.Contacts = append(message.Contacts, parseContactMessage(c)...)
+		}
+		return message
+	}
 
 	return message
 }
@@ -167,4 +180,26 @@ func mapContext(contextInfo *waE2E.ContextInfo) *domain.ContextEvent {
 		ID:   contextInfo.GetStanzaID(),
 		From: from,
 	}
+}
+
+func parseContactsMessage(contact *waE2E.ContactMessage) []domain.ContactEvent {
+	return parseContactMessage(contact)
+}
+
+func parseContactMessage(contact *waE2E.ContactMessage) []domain.ContactEvent {
+	vcardStr := contact.GetVcard()
+	if vcardStr == "" {
+		return nil
+	}
+	evt, err := vcard.ParseVCard(vcardStr)
+	if err != nil {
+		// If parsing fails, return empty — message type stays "contacts"
+		// but contacts array will be empty so downstream can still log it.
+		return nil
+	}
+	// If vCard has no name but ContactMessage has DisplayName, use it
+	if evt.Name.FormattedName == "" && contact.GetDisplayName() != "" {
+		evt.Name.FormattedName = contact.GetDisplayName()
+	}
+	return []domain.ContactEvent{evt}
 }

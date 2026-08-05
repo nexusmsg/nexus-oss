@@ -46,11 +46,23 @@ func validateOutboundMessage(message domain.OutboundMessage) error {
 	if message.MessagingProduct != "whatsapp" {
 		return domain.NewValidationError("messaging_product must be whatsapp")
 	}
-	if message.Type != "text" {
+	if message.Type != "text" && message.Type != "contacts" {
 		return domain.NewValidationError(fmt.Sprintf("message type %q is not supported", message.Type))
 	}
-	if message.Text == nil || strings.TrimSpace(message.Text.Body) == "" {
-		return domain.NewValidationError("text.body is required")
+	if message.Type == "text" {
+		if message.Text == nil || strings.TrimSpace(message.Text.Body) == "" {
+			return domain.NewValidationError("text.body is required")
+		}
+	}
+	if message.Type == "contacts" {
+		if len(message.Contacts) == 0 {
+			return domain.NewValidationError("contacts array must contain at least one contact")
+		}
+		for i, c := range message.Contacts {
+			if strings.TrimSpace(c.Name.FormattedName) == "" {
+				return domain.NewValidationError(fmt.Sprintf("contacts[%d].name.formatted_name is required", i))
+			}
+		}
 	}
 	if message.To == "" {
 		return domain.NewValidationError("to is required")

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/vcard"
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow"
@@ -199,7 +200,7 @@ func (c *Client) sendLoop() {
 }
 
 func (c *Client) handleSend(command sendCommand) {
-	if command.message.Text == nil {
+	if command.message.Text == nil && command.message.Type != "contacts" {
 		command.response <- sendResponse{err: errors.New("text message is missing")}
 		return
 	}
@@ -215,10 +216,22 @@ func (c *Client) handleSend(command sendCommand) {
 		command.response <- sendResponse{err: fmt.Errorf("parse recipient: %w", err)}
 		return
 	}
-	text := command.message.Text.Body
+
+	var msg *waE2E.Message
+	if command.message.Type == "contacts" {
+		msg = buildContactMessage(command.message.Contacts)
+		if msg == nil {
+			command.response <- sendResponse{err: errors.New("contacts message is missing contacts")}
+			return
+		}
+	} else {
+		text := command.message.Text.Body
+		msg = &waE2E.Message{Conversation: &text}
+	}
+
 	sendCtx, cancel := context.WithCancel(command.ctx)
 	stop := context.AfterFunc(c.workerCtx, cancel)
-	response, err := c.send(sendCtx, jid, &waE2E.Message{Conversation: &text})
+	response, err := c.send(sendCtx, jid, msg)
 	stop()
 	cancel()
 	if err != nil {
@@ -230,6 +243,91 @@ func (c *Client) handleSend(command sendCommand) {
 		Recipient: jid.User,
 		Timestamp: response.Timestamp,
 	}}
+}
+
+// buildContactMessage creates a WhatsApp contact message from domain contacts.
+// Returns ContactMessage for single contact, ContactsArrayMessage for multiple.
+func buildContactMessage(contacts []domain.ContactInput) *waE2E.Message {
+	if len(contacts) == 0 {
+		return nil
+	}
+
+	if len(contacts) == 1 {
+		vcardStr, err := buildSingleVCard(contacts[0])
+		if err != nil {
+			return nil
+		}
+		displayName := contacts[0].Name.FormattedName
+		return &waE2E.Message{
+			ContactMessage: &waE2E.ContactMessage{
+				DisplayName: &displayName,
+				Vcard:       &vcardStr,
+			},
+		}
+	}
+
+	// Multiple contacts → ContactsArrayMessage
+	var waContacts []*waE2E.ContactMessage
+	var arrayName string
+	for i, c := range contacts {
+		vcardStr, err := buildSingleVCard(c)
+		if err != nil {
+			continue
+		}
+		name := c.Name.FormattedName
+		waContacts = append(waContacts, &waE2E.ContactMessage{
+			DisplayName: &name,
+			Vcard:       &vcardStr,
+		})
+		if i == 0 && name != "" {
+			arrayName = name
+		}
+	}
+	if len(waContacts) == 0 {
+		return nil
+	}
+	return &waE2E.Message{
+		ContactsArrayMessage: &waE2E.ContactsArrayMessage{
+			DisplayName: &arrayName,
+			Contacts:    waContacts,
+		},
+	}
+}
+
+// buildSingleVCard converts one ContactInput into a vCard string.
+func buildSingleVCard(c domain.ContactInput) (string, error) {
+	evt := domain.ContactEvent{
+		Birthday: c.Birthday,
+		Name: domain.NameEvent{
+			FormattedName: c.Name.FormattedName,
+			FirstName:     c.Name.FirstName,
+			LastName:      c.Name.LastName,
+			MiddleName:    c.Name.MiddleName,
+			Prefix:        c.Name.Prefix,
+			Suffix:        c.Name.Suffix,
+		},
+		Org: domain.OrganizationEvent{
+			Company:    c.Org.Company,
+			Department: c.Org.Department,
+			Title:      c.Org.Title,
+		},
+	}
+	for _, p := range c.Phones {
+		evt.Phones = append(evt.Phones, domain.PhoneEvent{Phone: p.Phone, Type: p.Type, WaID: p.WaID})
+	}
+	for _, e := range c.Emails {
+		evt.Emails = append(evt.Emails, domain.EmailEvent{Email: e.Email, Type: e.Type})
+	}
+	for _, a := range c.Addresses {
+		evt.Addresses = append(evt.Addresses, domain.AddressEvent{
+			Street: a.Street, City: a.City, State: a.State,
+			Zip: a.Zip, Country: a.Country, CountryCode: a.CountryCode,
+		})
+	}
+	for _, u := range c.URLs {
+		evt.URLs = append(evt.URLs, domain.URLEvent{URL: u.URL, Type: u.Type})
+	}
+	return vcard.BuildVCard(evt)
 }
 
 func (c *Client) failQueuedSends() {
