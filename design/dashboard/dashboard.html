@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Nexus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0d0e;--surface:#15171a;--surface-raised:#1a1d21;--surface-hover:#1e2126;
+  --fg:#e8eaed;--muted:#7a7e85;--border:#262a2f;--border-light:#1e2126;
+  --accent:#34d399;--accent-hover:#2abb86;--accent-dim:rgba(52,211,153,.12);
+  --primary:#34d399;--secondary:#60a5fa;--warning:#fbbf24;--danger:#f87171;--success:#34d399;
+  --font-body:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --radius:6px;--radius-lg:10px;
+  --sidebar-w:240px;--topbar-h:56px;
+}
+html{font-family:var(--font-body);color:var(--fg);background:var(--bg);line-height:1.5;-webkit-font-smoothing:antialiased}
+body{display:flex;min-height:100vh;overflow:hidden}
+
+/* ── Sidebar ── */
+.sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:transform .2s}
+.sidebar-header{padding:16px 20px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
+.sidebar-header svg{width:22px;height:22px;color:var(--accent);flex-shrink:0}
+.sidebar-header span{font-size:15px;font-weight:700;letter-spacing:-0.02em}
+.sidebar-nav{flex:1;padding:12px 8px;overflow-y:auto}
+.nav-section{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);padding:12px 12px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius);color:var(--muted);text-decoration:none;font-size:13px;font-weight:500;transition:background .1s,color .1s;cursor:pointer}
+.nav-item:hover{background:var(--surface-hover);color:var(--fg)}
+.nav-item.active{background:var(--accent-dim);color:var(--accent)}
+.nav-item svg{width:16px;height:16px;flex-shrink:0}
+.nav-item .badge{margin-left:auto;background:var(--surface-raised);color:var(--muted);font-size:10px;font-weight:600;padding:2px 6px;border-radius:10px;font-family:var(--font-mono)}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--accent);flex-shrink:0}
+.sidebar-footer .user-info{flex:1;min-width:0}
+.sidebar-footer .user-name{font-size:13px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-footer .user-role{font-size:11px;color:var(--muted)}
+
+/* ── Main ── */
+.main{flex:1;margin-left:var(--sidebar-w);display:flex;flex-direction:column;min-height:100vh}
+
+/* ── Topbar ── */
+.topbar{height:var(--topbar-h);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:16px;background:var(--surface);position:sticky;top:0;z-index:50}
+.search-box{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:6px 12px;flex:1;max-width:400px}
+.search-box svg{width:14px;height:14px;color:var(--muted);flex-shrink:0}
+.search-box input{background:none;border:none;color:var(--fg);font-size:13px;outline:none;width:100%;font-family:var(--font-body)}
+.search-box input::placeholder{color:var(--muted)}
+.search-box kbd{font-family:var(--font-mono);font-size:11px;color:var(--muted);background:var(--surface-raised);padding:2px 6px;border-radius:4px;border:1px solid var(--border)}
+.topbar-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.topbar-btn{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);background:none;border:none;color:var(--muted);cursor:pointer;transition:background .1s,color .1s;position:relative}
+.topbar-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.topbar-btn svg{width:18px;height:18px}
+.topbar-btn .dot{position:absolute;top:7px;right:7px;width:7px;height:7px;background:var(--accent);border-radius:50%;border:2px solid var(--surface)}
+.topbar-divider{width:1px;height:24px;background:var(--border)}
+
+/* ── Content ── */
+.content{flex:1;padding:24px;overflow-y:auto;display:flex;flex-direction:column;gap:24px}
+.page-header{display:flex;align-items:center;justify-content:space-between}
+.page-title{font-size:22px;font-weight:700;letter-spacing:-0.02em}
+.page-subtitle{font-size:13px;color:var(--muted)}
+
+/* ── Cards ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-body{padding:20px}
+
+/* ── Stats Grid ── */
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px}
+.stat-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.stat-label svg{width:14px;height:14px}
+.stat-value{font-size:28px;font-weight:700;font-family:var(--font-mono);letter-spacing:-0.02em;color:var(--fg)}
+.stat-change{font-size:12px;font-family:var(--font-mono);margin-top:4px;display:flex;align-items:center;gap:4px}
+.stat-change.up{color:var(--success)}
+.stat-change.down{color:var(--danger)}
+.stat-change.neutral{color:var(--muted)}
+
+/* ── Status Card ── */
+.status-card{display:flex;gap:16px;flex-wrap:wrap}
+.device-status{flex:1;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;display:flex;align-items:center;gap:12px}
+.status-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.status-dot.connected{background:var(--success);box-shadow:0 0 8px rgba(52,211,153,.4)}
+.status-dot.disconnected{background:var(--danger)}
+.status-dot.pairing{background:var(--warning);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.device-info{flex:1;min-width:0}
+.device-number{font-family:var(--font-mono);font-size:13px;font-weight:500;color:var(--fg)}
+.device-label{font-size:11px;color:var(--muted)}
+.device-status-badge{font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;font-family:var(--font-mono)}
+.device-status-badge.connected{background:rgba(52,211,153,.12);color:var(--success)}
+.device-status-badge.disconnected{background:rgba(248,113,113,.12);color:var(--danger)}
+
+/* ── API Key Card ── */
+.api-key-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border-light)}
+.api-key-row:last-child{border-bottom:none}
+.api-key-label{font-size:13px;font-weight:500;min-width:80px}
+.api-key-value{font-family:var(--font-mono);font-size:13px;color:var(--muted);flex:1;user-select:all}
+.api-key-actions{display:flex;gap:4px}
+.btn-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;transition:all .15s}
+.btn-icon:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.btn-icon svg{width:14px;height:14px}
+
+/* ── Quick Actions ── */
+.quick-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.action-btn{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;transition:all .15s;text-decoration:none;color:inherit}
+.action-btn:hover{border-color:var(--accent);background:var(--surface-hover)}
+.action-btn svg{width:20px;height:20px;color:var(--accent)}
+.action-btn span{font-size:13px;font-weight:500;text-align:center}
+
+/* ── Table ── */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead{background:var(--surface-raised)}
+th{text-align:left;padding:10px 16px;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);white-space:nowrap}
+td{padding:10px 16px;border-top:1px solid var(--border-light);white-space:nowrap}
+tr:hover td{background:var(--surface-hover)}
+.mono{font-family:var(--font-mono);font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;font-family:var(--font-mono)}
+.badge.success{background:rgba(52,211,153,.12);color:var(--success)}
+.badge.danger{background:rgba(248,113,113,.12);color:var(--danger)}
+.badge.warning{background:rgba(251,191,36,.12);color:var(--warning)}
+.badge.info{background:rgba(96,165,250,.12);color:var(--secondary)}
+.badge.neutral{background:var(--surface-raised);color:var(--muted)}
+.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+/* ── Mobile ── */
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .main{margin-left:0}
+  .stats-grid{grid-template-columns:1fr}
+  .quick-actions{grid-template-columns:1fr}
+  .topbar{padding:0 16px}
+  .content{padding:16px}
+}
+</style>
+</head>
+<body data-od-id="dashboard-screen">
+
+<!-- ── Sidebar ── -->
+<aside class="sidebar" data-od-id="sidebar">
+  <div class="sidebar-header">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/></svg>
+    <span>Nexus</span>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">Overview</div>
+    <a href="dashboard.html" class="nav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </a>
+    <div class="nav-section">Manage</div>
+    <a href="api-keys.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      API Keys
+      <span class="badge">3</span>
+    </a>
+    <a href="sessions.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+      Sessions
+    </a>
+    <a href="webhooks.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Webhooks
+    </a>
+    <div class="nav-section">Monitor</div>
+    <a href="jobs.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Jobs
+    </a>
+    <a href="settings.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="avatar">AZ</div>
+    <div class="user-info">
+      <div class="user-name">Aziz M.</div>
+      <div class="user-role">Admin</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<div class="main">
+
+  <!-- Topbar -->
+  <header class="topbar" data-od-id="topbar">
+    <button class="topbar-btn" id="menuToggle" style="display:none" aria-label="Toggle menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search devices, keys, webhooks...">
+      <kbd>⌘K</kbd>
+    </div>
+    <div class="topbar-actions">
+      <button class="topbar-btn" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="dot"></span>
+      </button>
+      <div class="topbar-divider"></div>
+      <div class="avatar" style="width:28px;height:28px;font-size:11px;cursor:pointer">AZ</div>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="content">
+
+    <div class="page-header">
+      <div>
+        <div class="page-title">Dashboard</div>
+        <div class="page-subtitle">Overview of your Nexus integration</div>
+      </div>
+      <span class="badge success"><span class="badge-dot"></span> All systems operational</span>
+    </div>
+
+    <!-- Device Status -->
+    <div class="status-card" data-od-id="device-status">
+      <div class="device-status">
+        <div class="status-dot connected"></div>
+        <div class="device-info">
+          <div class="device-number">+62 812-3456-7890</div>
+          <div class="device-label">Production · Business Account</div>
+        </div>
+        <span class="device-status-badge connected">Connected</span>
+      </div>
+      <div class="device-status">
+        <div class="status-dot disconnected"></div>
+        <div class="device-info">
+          <div class="device-number">+62 857-9012-3456</div>
+          <div class="device-label">Staging · Personal Account</div>
+        </div>
+        <span class="device-status-badge disconnected">Disconnected</span>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid" data-od-id="quick-stats">
+      <div class="stat-card">
+        <div class="stat-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          Messages Sent Today
+        </div>
+        <div class="stat-value">1,247</div>
+        <div class="stat-change up">↑ 12% from yesterday</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          Webhook Delivery Rate
+        </div>
+        <div class="stat-value">99.2%</div>
+        <div class="stat-change neutral">— 2 failed deliveries</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Uptime
+        </div>
+        <div class="stat-value">99.97%</div>
+        <div class="stat-change up">Last 30 days</div>
+      </div>
+    </div>
+
+    <!-- API Key Quick View -->
+    <div class="card" data-od-id="api-key-quick">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          API Key
+        </div>
+        <a href="api-keys.html" style="font-size:12px;color:var(--accent);text-decoration:none">Manage keys →</a>
+      </div>
+      <div class="card-body">
+        <div class="api-key-row">
+          <span class="api-key-label">Production</span>
+          <span class="api-key-value" id="apiKeyMasked">nx_live_••••••••••••••••••••••••</span>
+          <div class="api-key-actions">
+            <button class="btn-icon" onclick="toggleKey('apiKeyMasked','nx_live_a8f3k2m9p1q4r7s0t5u2v8w3x6y1z4')" aria-label="Reveal key">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button class="btn-icon" onclick="copyKey('nx_live_a8f3k2m9p1q4r7s0t5u2v8w3x6y1z4')" aria-label="Copy key">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="quick-actions" data-od-id="quick-actions">
+      <a href="sessions.html" class="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        <span>Add Device</span>
+      </a>
+      <a href="https://docs.nexus.dev" class="action-btn" target="_blank">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <span>View Docs</span>
+      </a>
+      <a href="#" class="action-btn" onclick="document.getElementById('testModal').style.display='flex';return false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span>Test Endpoint</span>
+      </a>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="card" data-od-id="activity-log">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Recent Activity
+        </div>
+        <span style="font-size:12px;color:var(--muted)">Last 10 events</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Event</th>
+              <th>Device</th>
+              <th>Status</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">14:32:08</td>
+              <td>message.sent</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td><span class="badge success"><span class="badge-dot"></span> delivered</span></td>
+              <td class="mono" style="color:var(--muted)">wamid.HBg...</td>
+            </tr>
+            <tr>
+              <td class="mono">14:31:45</td>
+              <td>webhook.delivered</td>
+              <td class="mono">—</td>
+              <td><span class="badge success"><span class="badge-dot"></span> 200</span></td>
+              <td class="mono" style="color:var(--muted)">POST /hooks/inbound</td>
+            </tr>
+            <tr>
+              <td class="mono">14:30:12</td>
+              <td>message.received</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td><span class="badge info"><span class="badge-dot"></span> inbound</span></td>
+              <td class="mono" style="color:var(--muted)">Template: order_update</td>
+            </tr>
+            <tr>
+              <td class="mono">14:28:33</td>
+              <td>webhook.failed</td>
+              <td class="mono">—</td>
+              <td><span class="badge danger"><span class="badge-dot"></span> 503</span></td>
+              <td class="mono" style="color:var(--muted)">POST /hooks/inbound — timeout</td>
+            </tr>
+            <tr>
+              <td class="mono">14:25:01</td>
+              <td>session.connected</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td><span class="badge success"><span class="badge-dot"></span> online</span></td>
+              <td class="mono" style="color:var(--muted)">Business Account</td>
+            </tr>
+            <tr>
+              <td class="mono">14:20:44</td>
+              <td>message.sent</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td><span class="badge success"><span class="badge-dot"></span> delivered</span></td>
+              <td class="mono" style="color:var(--muted)">wamid.HBg...</td>
+            </tr>
+            <tr>
+              <td class="mono">14:18:11</td>
+              <td>api_key.rotated</td>
+              <td class="mono">—</td>
+              <td><span class="badge warning"><span class="badge-dot"></span> rotated</span></td>
+              <td class="mono" style="color:var(--muted)">Production key</td>
+            </tr>
+            <tr>
+              <td class="mono">14:15:29</td>
+              <td>message.sent</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td><span class="badge success"><span class="badge-dot"></span> sent</span></td>
+              <td class="mono" style="color:var(--muted)">wamid.HBg...</td>
+            </tr>
+            <tr>
+              <td class="mono">14:10:05</td>
+              <td>webhook.delivered</td>
+              <td class="mono">—</td>
+              <td><span class="badge success"><span class="badge-dot"></span> 200</span></td>
+              <td class="mono" style="color:var(--muted)">POST /hooks/status</td>
+            </tr>
+            <tr>
+              <td class="mono">14:05:38</td>
+              <td>session.paired</td>
+              <td class="mono">+62 857-9012-3456</td>
+              <td><span class="badge warning"><span class="badge-dot"></span> pairing</span></td>
+              <td class="mono" style="color:var(--muted)">QR scan pending</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- Test Endpoint Modal -->
+<div id="testModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:480px;padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <h3 style="font-size:16px;font-weight:600">Test Endpoint</h3>
+      <button onclick="document.getElementById('testModal').style.display='none'" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px">✕</button>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">METHOD</label>
+      <select style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--fg);font-family:var(--font-mono);font-size:13px">
+        <option>POST</option><option>GET</option><option>PUT</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">URL</label>
+      <input type="text" value="https://api.nexus.dev/v1/messages" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--fg);font-family:var(--font-mono);font-size:13px;outline:none">
+    </div>
+    <div style="margin-bottom:20px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">PAYLOAD</label>
+      <textarea rows="4" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--fg);font-family:var(--font-mono);font-size:12px;resize:vertical;outline:none">{"messaging_product":"whatsapp","to":"6281234567890","type":"text","text":{"body":"Hello from Nexus!"}}</textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('testModal').style.display='none'" style="padding:8px 16px;background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-size:13px;cursor:pointer">Cancel</button>
+      <button style="padding:8px 16px;background:var(--accent);border:none;border-radius:var(--radius);color:#0c0d0e;font-size:13px;font-weight:600;cursor:pointer">Send Test</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Sidebar toggle (mobile)
+const menuToggle = document.getElementById('menuToggle');
+const sidebar = document.querySelector('.sidebar');
+const mql = window.matchMedia('(max-width:768px)');
+function checkMobile(){ menuToggle.style.display = mql.matches ? 'flex' : 'none'; }
+mql.addEventListener('change', checkMobile);
+checkMobile();
+menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
+
+// API Key reveal/copy
+function toggleKey(elId, fullKey) {
+  const el = document.getElementById(elId);
+  if (el.dataset.revealed === 'true') {
+    el.textContent = fullKey.replace(/.(?=.{4})/g, '•');
+    el.dataset.revealed = 'false';
+  } else {
+    el.textContent = fullKey;
+    el.dataset.revealed = 'true';
+  }
+}
+function copyKey(key) {
+  navigator.clipboard.writeText(key).then(() => {
+    const btn = event.currentTarget;
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = 'var(--accent)';
+    setTimeout(() => { btn.style.borderColor = ''; btn.style.color = ''; }, 1200);
+  });
+}
+</script>
+
+</body>
+</html>

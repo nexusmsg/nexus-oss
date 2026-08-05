@@ -12,7 +12,7 @@ docs/
     api/               <- Hono API (Node.js)
     worker/            <- WhatsMeow gateway (Go)
   shared/              <- shared assets (db migrations)
-  apps/                <- UI & frontend (placeholder)
+  apps/                <- UI & frontend (Nexus dashboard)
 ```
 
 ## Repository at a glance
@@ -26,7 +26,7 @@ account.
 | API | `services/api/` | Node.js, Hono, PostgREST | [services/api](services/api/) |
 | Worker | `services/worker/` | Go, WhatsMeow, pgx | [services/worker](services/worker/) |
 | DB migrations | `shared/db/migrations/` | SQL, golang-migrate | [services/../shared](shared/) |
-| Frontend | `apps/` | placeholder | [apps](apps/) |
+| Frontend | `apps/dashboard/` | React, Vite, TS | [apps](apps/) |
 | Architecture & flows | `docs/architecture/`, `docs/flow.md` | mermaid flows | [architecture](architecture/) |
 
 ## How to navigate

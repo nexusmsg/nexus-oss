@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — Developer Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0c0d0e;
+    --surface:#15171a;
+    --surface-raised:#1a1d21;
+    --fg:#e8eaed;
+    --muted:#7a7e85;
+    --border:#262a2f;
+    --accent:#34d399;
+    --accent-hover:#2abb86;
+    --accent-dim:rgba(52,211,153,.12);
+    --primary:#34d399;
+    --secondary:#60a5fa;
+    --warning:#fbbf24;
+    --danger:#f87171;
+    --success:#34d399;
+    --font-body:'Inter',system-ui,-apple-system,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --radius:6px;
+    --radius-lg:10px;
+  }
+  html{font-family:var(--font-body);color:var(--fg);background:var(--bg);line-height:1.5;-webkit-font-smoothing:antialiased}
+  body{min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:48px 24px}
+
+  .logo{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .logo svg{width:28px;height:28px;color:var(--accent)}
+  .logo-text{font-size:20px;font-weight:700;letter-spacing:-0.03em;color:var(--fg)}
+  .tagline{font-size:14px;color:var(--muted);margin-bottom:48px;text-align:center;max-width:420px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;width:100%;max-width:1120px}
+
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:var(--radius-lg);
+    padding:24px;
+    text-decoration:none;
+    color:inherit;
+    transition:border-color .15s,box-shadow .15s;
+    display:flex;flex-direction:column;gap:12px;
+  }
+  .card:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-dim)}
+  .card-header{display:flex;align-items:center;justify-content:space-between}
+  .card-icon{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);background:var(--accent-dim);color:var(--accent)}
+  .card-icon svg{width:18px;height:18px}
+  .card-status{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;padding:3px 8px;border-radius:20px;font-family:var(--font-mono)}
+  .card-status.ok{background:rgba(52,211,153,.12);color:var(--success)}
+  .card-status.warn{background:rgba(251,191,36,.12);color:var(--warning)}
+  .card-status.neutral{background:var(--surface-raised);color:var(--muted)}
+  .card-title{font-size:16px;font-weight:600;color:var(--fg)}
+  .card-desc{font-size:13px;color:var(--muted);line-height:1.5;flex:1}
+  .card-arrow{color:var(--muted);transition:color .15s}
+  .card:hover .card-arrow{color:var(--accent)}
+
+  .footer{margin-top:48px;font-size:12px;color:var(--muted);text-align:center}
+  .footer span{font-family:var(--font-mono);color:var(--accent)}
+</style>
+</head>
+<body data-od-id="portal-launcher">
+
+<div class="logo" data-od-id="portal-logo">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/></svg>
+  <span class="logo-text">Nexus</span>
+</div>
+
+<p class="tagline">WhatsApp Business API gateway — manage devices, keys, webhooks, and message delivery from one place.</p>
+
+<div class="grid">
+
+  <a href="dashboard.html" class="card" data-od-id="card-dashboard">
+    <div class="card-header">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </div>
+      <span class="card-status ok">2 devices</span>
+    </div>
+    <div class="card-title">Dashboard</div>
+    <div class="card-desc">Connection status, API usage stats, recent activity, and quick actions.</div>
+    <svg class="card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+
+  <a href="api-keys.html" class="card" data-od-id="card-api-keys">
+    <div class="card-header">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      </div>
+      <span class="card-status ok">3 active</span>
+    </div>
+    <div class="card-title">API Keys</div>
+    <div class="card-desc">Generate, rotate, and revoke API keys for your integrations.</div>
+    <svg class="card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+
+  <a href="sessions.html" class="card" data-od-id="card-sessions">
+    <div class="card-header">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+      </div>
+      <span class="card-status ok">1 connected</span>
+    </div>
+    <div class="card-title">Sessions</div>
+    <div class="card-desc">Manage WhatsApp devices, pair via QR code, and monitor connection state.</div>
+    <svg class="card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+
+  <a href="webhooks.html" class="card" data-od-id="card-webhooks">
+    <div class="card-header">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      </div>
+      <span class="card-status warn">0 configured</span>
+    </div>
+    <div class="card-title">Webhooks</div>
+    <div class="card-desc">Configure webhook URLs for inbound message forwarding and delivery logs.</div>
+    <svg class="card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+
+  <a href="jobs.html" class="card" data-od-id="card-jobs">
+    <div class="card-header">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </div>
+      <span class="card-status neutral">247 today</span>
+    </div>
+    <div class="card-title">Jobs</div>
+    <div class="card-desc">Filterable message history with status, delivery times, and retry logs.</div>
+    <svg class="card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+
+  <a href="settings.html" class="card" data-od-id="card-settings">
+    <div class="card-header">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+      <span class="card-status neutral">Account</span>
+    </div>
+    <div class="card-title">Settings</div>
+    <div class="card-desc">Profile, security, 2FA, notification preferences, and account management.</div>
+    <svg class="card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+
+</div>
+
+<div class="footer">Nexus Developer Portal · <span>v2.4.0</span> · <a href="auth.html" style="color:var(--accent);text-decoration:none">Sign in</a> · <a href="register.html" style="color:var(--accent);text-decoration:none">Create account</a></div>
+
+</body>
+</html>

@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Webhooks — Nexus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0d0e;--surface:#15171a;--surface-raised:#1a1d21;--surface-hover:#1e2126;
+  --fg:#e8eaed;--muted:#7a7e85;--border:#262a2f;--border-light:#1e2126;
+  --accent:#34d399;--accent-hover:#2abb86;--accent-dim:rgba(52,211,153,.12);
+  --primary:#34d399;--secondary:#60a5fa;--warning:#fbbf24;--danger:#f87171;--success:#34d399;
+  --font-body:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --radius:6px;--radius-lg:10px;
+  --sidebar-w:240px;--topbar-h:56px;
+}
+html{font-family:var(--font-body);color:var(--fg);background:var(--bg);line-height:1.5;-webkit-font-smoothing:antialiased}
+body{display:flex;min-height:100vh;overflow:hidden}
+.sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:transform .2s}
+.sidebar-header{padding:16px 20px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
+.sidebar-header svg{width:22px;height:22px;color:var(--accent);flex-shrink:0}
+.sidebar-header span{font-size:15px;font-weight:700;letter-spacing:-0.02em}
+.sidebar-nav{flex:1;padding:12px 8px;overflow-y:auto}
+.nav-section{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);padding:12px 12px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius);color:var(--muted);text-decoration:none;font-size:13px;font-weight:500;transition:background .1s,color .1s;cursor:pointer}
+.nav-item:hover{background:var(--surface-hover);color:var(--fg)}
+.nav-item.active{background:var(--accent-dim);color:var(--accent)}
+.nav-item svg{width:16px;height:16px;flex-shrink:0}
+.nav-item .badge{margin-left:auto;background:var(--surface-raised);color:var(--muted);font-size:10px;font-weight:600;padding:2px 6px;border-radius:10px;font-family:var(--font-mono)}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--accent);flex-shrink:0}
+.sidebar-footer .user-info{flex:1;min-width:0}
+.sidebar-footer .user-name{font-size:13px;font-weight:600;color:var(--fg)}
+.sidebar-footer .user-role{font-size:11px;color:var(--muted)}
+.main{flex:1;margin-left:var(--sidebar-w);display:flex;flex-direction:column;min-height:100vh}
+.topbar{height:var(--topbar-h);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:16px;background:var(--surface);position:sticky;top:0;z-index:50}
+.search-box{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:6px 12px;flex:1;max-width:400px}
+.search-box svg{width:14px;height:14px;color:var(--muted);flex-shrink:0}
+.search-box input{background:none;border:none;color:var(--fg);font-size:13px;outline:none;width:100%}
+.search-box input::placeholder{color:var(--muted)}
+.search-box kbd{font-family:var(--font-mono);font-size:11px;color:var(--muted);background:var(--surface-raised);padding:2px 6px;border-radius:4px;border:1px solid var(--border)}
+.topbar-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.topbar-btn{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);background:none;border:none;color:var(--muted);cursor:pointer;transition:all .15s;position:relative}
+.topbar-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.topbar-btn svg{width:18px;height:18px}
+.topbar-btn .dot{position:absolute;top:7px;right:7px;width:7px;height:7px;background:var(--accent);border-radius:50%;border:2px solid var(--surface)}
+.topbar-divider{width:1px;height:24px;background:var(--border)}
+.content{flex:1;padding:24px;overflow-y:auto;display:flex;flex-direction:column;gap:24px}
+.page-header{display:flex;align-items:center;justify-content:space-between}
+.page-title{font-size:22px;font-weight:700;letter-spacing:-0.02em}
+.page-subtitle{font-size:13px;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;border:none}
+.btn-primary{background:var(--accent);color:#0c0d0e}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-ghost{background:none;border:1px solid var(--border);color:var(--fg)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:none;border:1px solid var(--danger);color:var(--danger)}
+.btn-danger:hover{background:rgba(248,113,113,.1)}
+.btn-sm{padding:5px 10px;font-size:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-body{padding:20px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead{background:var(--surface-raised)}
+th{text-align:left;padding:10px 16px;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);white-space:nowrap}
+td{padding:10px 16px;border-top:1px solid var(--border-light);white-space:nowrap}
+tr:hover td{background:var(--surface-hover)}
+.mono{font-family:var(--font-mono);font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;font-family:var(--font-mono)}
+.badge.success{background:rgba(52,211,153,.12);color:var(--success)}
+.badge.danger{background:rgba(248,113,113,.12);color:var(--danger)}
+.badge.warning{background:rgba(251,191,36,.12);color:var(--warning)}
+.badge.neutral{background:var(--surface-raised);color:var(--muted)}
+.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.actions{display:flex;gap:4px}
+.btn-icon{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;transition:all .15s}
+.btn-icon:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.btn-icon svg{width:13px;height:13px}
+.alert{padding:12px 16px;border-radius:var(--radius);font-size:13px;display:flex;align-items:center;gap:8px}
+.alert-warning{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);color:var(--warning)}
+.alert-warning svg{width:16px;height:16px;flex-shrink:0}
+.alert-info{background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);color:var(--secondary)}
+.alert-info svg{width:16px;height:16px;flex-shrink:0}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 24px;text-align:center}
+.empty-icon{width:64px;height:64px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+.empty-icon svg{width:28px;height:28px;color:var(--accent)}
+.empty-title{font-size:18px;font-weight:600;margin-bottom:8px}
+.empty-desc{font-size:13px;color:var(--muted);max-width:360px;margin-bottom:20px;line-height:1.6}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:520px;padding:24px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.modal-header h3{font-size:16px;font-weight:600}
+.modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1}
+.form-group{margin-bottom:16px}
+.form-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em}
+.form-input,.form-select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--fg);font-family:var(--font-mono);font-size:13px;outline:none;transition:border-color .15s}
+.form-input:focus,.form-select:focus{border-color:var(--accent)}
+.form-hint{font-size:11px;color:var(--muted);margin-top:4px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .main{margin-left:0}
+  .topbar{padding:0 16px}
+  .content{padding:16px}
+  .page-header{flex-direction:column;align-items:flex-start;gap:12px}
+}
+</style>
+</head>
+<body data-od-id="webhooks-screen">
+
+<aside class="sidebar" data-od-id="sidebar">
+  <div class="sidebar-header">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/></svg>
+    <span>Nexus</span>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">Overview</div>
+    <a href="dashboard.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </a>
+    <div class="nav-section">Manage</div>
+    <a href="api-keys.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      API Keys
+      <span class="badge">3</span>
+    </a>
+    <a href="sessions.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+      Sessions
+    </a>
+    <a href="webhooks.html" class="nav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Webhooks
+    </a>
+    <div class="nav-section">Monitor</div>
+    <a href="jobs.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Jobs
+    </a>
+    <a href="settings.html" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="avatar">AZ</div>
+    <div class="user-info">
+      <div class="user-name">Aziz M.</div>
+      <div class="user-role">Admin</div>
+    </div>
+  </div>
+</aside>
+
+<div class="main">
+  <header class="topbar" data-od-id="topbar">
+    <button class="topbar-btn" id="menuToggle" style="display:none" aria-label="Toggle menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search webhooks...">
+      <kbd>⌘K</kbd>
+    </div>
+    <div class="topbar-actions">
+      <button class="topbar-btn" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="dot"></span>
+      </button>
+      <div class="topbar-divider"></div>
+      <div class="avatar" style="width:28px;height:28px;font-size:11px;cursor:pointer">AZ</div>
+    </div>
+  </header>
+
+  <div class="content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Webhooks</div>
+        <div class="page-subtitle">Configure endpoints for inbound message forwarding</div>
+      </div>
+      <button class="btn btn-primary" onclick="document.getElementById('addWebhookModal').classList.add('open')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        Add Webhook
+      </button>
+    </div>
+
+    <!-- Webhook Configs -->
+    <div class="card" data-od-id="webhook-configs">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          Configured Webhooks
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Phone Number</th>
+              <th>Webhook URL</th>
+              <th>Secret</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">+62 812-3456-7890</td>
+              <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">https://api.mysite.com/hooks/nexus/inbound</td>
+              <td><span class="badge success">set</span></td>
+              <td><span class="badge success"><span class="badge-dot"></span> active</span></td>
+              <td>
+                <div class="actions">
+                  <button class="btn-icon" onclick="testWebhook(this)" title="Test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+                  <button class="btn-icon" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                  <button class="btn-icon" title="Delete" style="border-color:var(--danger);color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">+62 857-9012-3456</td>
+              <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">https://staging.mysite.com/hooks/nexus/inbound</td>
+              <td><span class="badge success">set</span></td>
+              <td><span class="badge warning"><span class="badge-dot"></span> paused</span></td>
+              <td>
+                <div class="actions">
+                  <button class="btn-icon" onclick="testWebhook(this)" title="Test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+                  <button class="btn-icon" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                  <button class="btn-icon" title="Delete" style="border-color:var(--danger);color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Delivery Log -->
+    <div class="card" data-od-id="delivery-log">
+      <div class="card-header">
+        <div class="card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Delivery Log
+        </div>
+        <span style="font-size:12px;color:var(--muted)">Last 10 deliveries</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Phone</th>
+              <th>Event</th>
+              <th>URL</th>
+              <th>Status</th>
+              <th>Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">14:31:45</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">142ms</td>
+            </tr>
+            <tr>
+              <td class="mono">14:28:33</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge danger">503</span></td>
+              <td class="mono">5012ms</td>
+            </tr>
+            <tr>
+              <td class="mono">14:20:44</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>message-status.update</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">89ms</td>
+            </tr>
+            <tr>
+              <td class="mono">14:15:29</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">156ms</td>
+            </tr>
+            <tr>
+              <td class="mono">14:10:05</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>message-status.update</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">78ms</td>
+            </tr>
+            <tr>
+              <td class="mono">14:05:38</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">201ms</td>
+            </tr>
+            <tr>
+              <td class="mono">13:58:12</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">167ms</td>
+            </tr>
+            <tr>
+              <td class="mono">13:52:44</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>message-status.update</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge danger">4xx</span></td>
+              <td class="mono">45ms</td>
+            </tr>
+            <tr>
+              <td class="mono">13:45:09</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">134ms</td>
+            </tr>
+            <tr>
+              <td class="mono">13:38:21</td>
+              <td class="mono">+62 812-3456-7890</td>
+              <td>messages.upsert</td>
+              <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">/hooks/nexus/inbound</td>
+              <td><span class="badge success">200</span></td>
+              <td class="mono">112ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Webhook Modal -->
+<div id="addWebhookModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Add Webhook</h3>
+      <button class="modal-close" onclick="document.getElementById('addWebhookModal').classList.remove('open')">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Phone Number</label>
+      <select class="form-select">
+        <option>+62 812-3456-7890 (Production)</option>
+        <option>+62 857-9012-3456 (Staging)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Webhook URL</label>
+      <input class="form-input" type="url" placeholder="https://api.example.com/hooks/nexus">
+      <div class="form-hint">Must be HTTPS. Nexus will POST events to this URL.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Verify Token</label>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" type="text" value="whsec_a8f3k2m9p1q4r7s0" readonly style="flex:1">
+        <button class="btn btn-ghost btn-sm" onclick="this.previousElementSibling.value='whsec_'+Array.from({length:20},()=>Math.random().toString(36)[2]).join('')">Regenerate</button>
+      </div>
+      <div class="form-hint">Used by Meta to verify your webhook endpoint during setup.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Secret (optional)</label>
+      <input class="form-input" type="text" placeholder="Leave blank to skip signature verification">
+      <div class="form-hint">If set, Nexus signs each payload with HMAC-SHA256 using this secret.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('addWebhookModal').classList.remove('open')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('addWebhookModal').classList.remove('open')">Save Webhook</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const mql = window.matchMedia('(max-width:768px)');
+const menuToggle = document.getElementById('menuToggle');
+const sidebar = document.querySelector('.sidebar');
+function checkMobile(){ menuToggle.style.display = mql.matches ? 'flex' : 'none'; }
+mql.addEventListener('change', checkMobile);
+checkMobile();
+menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
+
+function testWebhook(btn) {
+  const row = btn.closest('tr');
+  const url = row.querySelector('td:nth-child(2)').textContent;
+  btn.style.borderColor = 'var(--accent)';
+  btn.style.color = 'var(--accent)';
+  setTimeout(() => { btn.style.borderColor = ''; btn.style.color = ''; }, 1500);
+}
+</script>
+
+</body>
+</html>
