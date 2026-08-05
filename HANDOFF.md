@@ -337,3 +337,58 @@ queue-driven: the API enqueues a `send_message` job and the worker consumes it
 via `internal/adapters/queue` → `internal/service/executor.go` → the per-device
 WhatsMeow sender. Validation lives in `internal/service/outbound.go`
 (`validateOutboundMessage`, reused by the executor).
+
+## Nexus Dashboard (M1, 2026-08-05)
+
+The frontend area now has its first app — the **Nexus developer portal**:
+
+- `apps/dashboard/` (@waba/dashboard, React + Vite + TS): shell + three routes
+  (`/sessions`, `/webhooks`, `/api-keys`; `/` → redirect to `/sessions`),
+  ported from `design/dashboard/` (tokens in `src/styles/tokens.css`).
+- **FE auth**: env `VITE_API_TOKEN` → Bearer; otherwise a browser Basic Auth
+  gate (sessionStorage cache, clear/retry on 401). Base URL via `VITE_API_URL`
+  (default `http://localhost:3000`), direct cross-origin — **no Vite proxy**.
+- **BE auth** (`services/api/src/adapters/http/auth.ts`): accepts Bearer **or**
+  Basic against the same `API_AUTH_TOKEN` (Basic password must equal the
+  token; constant-time compare); every 401 carries
+  `WWW-Authenticate: Basic realm="nexus"`; empty token → auth off for both.
+- **BE CORS** (`app.ts`, registered on the `apiV1` sub-router before the auth
+  guard): Hono `cors` from `CORS_ORIGINS` (comma-separated; default
+  `http://localhost:5173`; empty → CORS off). Methods
+  GET/POST/PATCH/DELETE/OPTIONS, headers Authorization + Content-Type, no
+  credentials. **Note:** CORS lives in `app.ts`, not `compose.ts` (middleware
+  ordering: registering after the sub-router mount would skip non-OPTIONS
+  requests); `Config` still flows from `compose.ts` → `buildApp` → `createApp`.
+- New docs: `docs/apps/README.md` (app index), `docs/README.md` apps rows
+  updated, `docs/services/api/configuration.md` gains `CORS_ORIGINS` + auth
+  notes. Plan: `.opencode/plans/dashboard.md` (M1 marked completed).
+- API-keys page is **frontend-first** (empty state; backend = B1). Webhook
+  delivery log = empty state (no endpoint, B3); Test button disabled (B6);
+  Verify Token omitted (B4). Session Delete/Disconnect render disabled
+  (B2); Reconnect = re-run pairing.
+
+Verification at this handoff (root turbo):
+
+```text
+npm run build  3/3 packages OK (api tsc, dashboard tsc+vite, worker go build)
+npm run lint   2/2 OK (api eslint, dashboard eslint, worker gofmt)
+npm test       3/3 OK — api 171 passed + 34 skipped (integration gated),
+               dashboard 8 passed (client + auth-context), worker go tests
+```
+
+Integration suite (`app.integration.test.ts`) extended to cover the M1 auth +
+CORS behavior against the real stack (Bearer + Basic valid/invalid +
+`WWW-Authenticate`, CORS preflight allowed/disallowed/off): 34 tests, run with
+`TEST_SUPABASE_URL=http://localhost:3001 TEST_SUPABASE_SERVICE_ROLE_KEY=<dev-jwt>
+npx vitest run src/adapters/http/app.integration.test.ts` (dev JWT = HS256
+`{"role":"postgres"}` signed with `PGRST_JWT_SECRET`, same as
+`SUPABASE_SERVICE_ROLE_KEY` in `.env.example`). The manual curl smoke I ran
+(sessions create→list→status→logout, webhooks create→patch→subscriptions→
+delete) is now fully encoded in that suite — the "remaining M1 verification"
+note below is therefore obsolete except for the browser viewport check, which
+was **dropped by user decision 2026-08-05**: a Playwright E2E attempt was
+started, cancelled, and fully cleaned up (no `e2e/`, no `playwright.config.ts`,
+no `e2e` turbo task, no `@playwright/test` dep). FE behavior verification stays
+with vitest unit tests (`src/api/client.test.ts` + `src/app/auth-context.test.tsx`,
+8 tests: Bearer resolution, Basic gate flow, 401 → retry).
+
