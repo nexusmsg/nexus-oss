@@ -29,3 +29,26 @@ handoff.
 - Architecture plan: `.opencode/plans/split-architecture.md`
 - Worker handoff: `HANDOFF.md`
 - Webhook mapping spec: `services/worker/docs/api-mapping-webhook.md`
+
+## Planning and Milestones
+
+- Break large plans into explicit milestones (M1, M2, ...) before writing any
+  code. Each milestone must be independently verifiable and shippable; never
+  implement a large plan in one pass.
+- Work one milestone at a time: complete, verify, and close it before starting
+  the next. New milestones are gated on the previous one's verification
+  passing.
+- Record milestone status in `.opencode/plans/split-architecture.md` (mark
+  `(Completed)` and append verification evidence) and reference the milestone
+  in commit messages, e.g. `feat: ... (M9)`.
+
+## Handoff Logging
+
+- Keep `HANDOFF.md` current as work progresses, not only at the end: update it
+  whenever a milestone (or significant chunk) lands.
+- Log what changed, what was verified (with evidence), open/blocked items, and
+  the latest milestone/commit.
+- Before finishing a session, refresh the handoff so the next agent can pick up
+  without re-discovering context — including environment notes that bite later
+  (e.g. migrations are baked into Docker images, so `docker compose build
+  migrate` is required before `up -d` after new migration files).

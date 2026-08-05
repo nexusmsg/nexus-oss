@@ -38,29 +38,46 @@ noted as such.
 - Store: WhatsMeow device store is Postgres (`WHATSMEOW_STORE_DSN`, falls back to `SUPABASE_DSN`); `lib/pq` driver, no CGO.
 - Postgres DSNs in compose use `?sslmode=disable` (dev-only); PostgREST JWT secret default is >=32 bytes.
 - Copy `.env.example` to `.env` to override; the stack also runs with defaults.
-- Up: `docker compose up --build -d`. Verify: `curl localhost:3000/` returns `{"ok":true,"service":"api"}`, postgrest on 3001, `schema_migrations` version 2.
+- Up: `docker compose up --build -d`. Verify: `curl localhost:3000/` returns `{"ok":true,"service":"api"}`, postgrest on 3001, `schema_migrations` version 5 (000001–000005 applied).
+- **Migrations are baked into the worker/migrate image at build time** — after adding a migration file, `docker compose build migrate` is required before `up -d`; plain `up -d` reuses the old image and silently skips the new migration.
 
 ## Current Status
 
-The worker now runs the M5 architecture:
+The worker now runs the M9 architecture:
 
-- **Multi-device WhatsMeow registry** keyed by `phone_number_id`; each device
-  owns a bounded outbound send queue and its own QR/reconnect loop.
+- **DeviceManager actor model** (`internal/adapters/whatsmeow/manager.go` +
+  `actor.go`): one manager goroutine routes lifecycle commands
+  (EnsureDevice/Pair/Logout/ConnectStored) to per-device actor goroutines.
+  Devices are provisioned from the `sessions` table, replacing the old static
+  `WABA_DEVICES` registry (removed).
+- **Boot sync**: `ListSessions` → `EnsureDevice` per stored session →
+  `ConnectStored` (connects only sessions with a stored WhatsMeow session, no
+  QR at boot). Sessions created later are lazy-ensured by the executor.
+- **Lazy ensure** (`executor.go`): before pairing/logout/send, resolve the
+  session via `GetByPhoneNumberID` (missing → job fails "session not found")
+  and call `EnsureDevice`. `ErrAlreadyPaired` is treated as idempotent success
+  (no QR, status stays `created`).
 - **Queue consumer** (pgx): polls `jobs`, claims with `FOR UPDATE SKIP LOCKED`,
   completes with `result: {"wa_message_id": "<real wamid>"}`, retries with
   exponential backoff, fails after max attempts.
-- **Outbound executor** (service layer): claimed job → sender for the job's
-  `phone_number_id` → validate → `ports.MessageSender` → real wamid.
+- **Outbound executor** (service layer): claimed job → lazy ensure → validate →
+  `ports.MessageSender` (from `DeviceManager.Sender`) → real wamid.
+- **Heartbeat** (`internal/adapters/queue/heartbeat.go`): batch-refreshes
+  `sessions.last_seen_at` via `UpdateHeartbeats(ActiveDevices())`; skips the
+  DB round-trip when no devices are active.
 - **Webhook config provider** (`apiconfig`): before forwarding an inbound
   event, fetches `GET {API_URL}/internal/webhook-config?phone_number_id=...`
   (Bearer `INTERNAL_TOKEN`, per-ID TTL cache); payloads are forwarded with the
   returned secret (HMAC) and a bounded non-2xx retry.
+- `business_account_id` is now per-session (migration 000005): the API accepts
+  it on create and echoes it; the worker uses it as `entry[].id`, falling back
+  to the global `BUSINESS_ACCOUNT_ID` when empty.
 - The legacy Echo HTTP adapter (`internal/adapters/httpapi/`) was **removed**
   along with `PORT`/`API_AUTH_TOKEN` worker config — the API owns the HTTP
   surface now.
 
-Latest commit: M6 (see the verification log in
-`.opencode/plans/split-architecture.md`).
+Latest commit: M9 (see `git log --oneline -5`). Verification log in
+`.opencode/plans/split-architecture.md`.
 
 M6 integration, verified against the compose stack: the full
 API → PostgREST → jobs → worker → response chain runs end to end. Dev
@@ -110,8 +127,10 @@ WhatsMeow event
 Outbound job
   API POST /:phone_number_id/messages -> jobs row (pending)
   -> internal/adapters/queue consumer (Claim, FOR UPDATE SKIP LOCKED)
-  -> internal/service/executor.go: unmarshal payload -> validate
-  -> whatsmeow.Registry.Sender(phone_number_id) -> per-device bounded
+  -> internal/service/executor.go: lazy ensureDevice (GetByPhoneNumberID ->
+     DeviceManager.EnsureDevice; missing session fails the job) -> unmarshal
+     payload -> validate
+  -> whatsmeow.DeviceManager.Sender(phone_number_id) -> per-device bounded
      send queue -> whatsmeow.SendMessage
   -> Complete with result: {"wa_message_id": "<real wamid>"}
   -> API polls result and returns the official WABA 200 envelope
@@ -127,7 +146,8 @@ Outbound job
 - Self-sent messages (`IsFromMe`) are ignored.
 - WABA payload metadata comes from `BUSINESS_ACCOUNT_ID` (global fallback) and
   per-device `phone_number_id` + display number provisioned from the `sessions`
-  table.
+  table. `entry[].id` uses the session's `business_account_id`, falling back to
+  the global `BUSINESS_ACCOUNT_ID` when empty.
 - The service logs the final JSON payload before forwarding it.
 - Forwarding uses HTTP POST with `Content-Type: application/json`.
 - The webhook URL/secret come from the API (`apiconfig` provider, per-ID TTL
@@ -141,9 +161,14 @@ Outbound job
   logging continues.
 - Shutdown uses `signal.NotifyContext`: the poll loop stops, per-device send
   queues are drained, and every WhatsMeow client disconnects.
-- Multi-device: one `whatsmeow.Client` per `phone_number_id` (`Registry`),
+- Multi-device: one `whatsmeow.Client` per `phone_number_id`, driven by
+  `DeviceManager` (one manager goroutine + one actor goroutine per device),
   each with its own bounded outbound queue (32) and worker goroutine; QR
   login and reconnect (bounded backoff) are handled per device.
+- Pairing is lazy: the executor ensures the device before pairing/logout/send;
+  `ErrAlreadyPaired` is treated as idempotent success (no QR).
+- Heartbeat refresh is batched: `UpdateHeartbeats(ActiveDevices())` and skips
+  the DB when no devices are active.
 - Outbound jobs are claimed from Postgres with `FOR UPDATE SKIP LOCKED`,
   executed through the per-device queue, completed with the real wamid in
   `result.wa_message_id`, retried with exponential backoff, and failed after
@@ -187,18 +212,25 @@ destinations now come from the API's internal webhook-config endpoint.
   service resolves the destination per event via `WebhookConfigProvider`
   instead of static config.
 - `MessageSender` is a port and each WhatsMeow `Client` implements it with a
-  channel-backed per-device worker; `Registry` resolves senders by
-  `phone_number_id` and implements `OutboundSenderProvider`.
+  channel-backed per-device worker; `DeviceManager` resolves senders by
+  `phone_number_id` and implements `OutboundSenderProvider` + `ActiveDeviceProvider`.
+- `DeviceManager` (port) uses an actor model: a single manager goroutine routes
+  lifecycle commands to one goroutine per device; callers wait on a response
+  channel, never inside the manager loop. `EnsureDevice` auto-connects devices
+  that already have a stored WhatsMeow session; `ErrAlreadyPaired` marks a
+  device that is already paired so pairing can be treated as idempotent.
 - `JobStore` (pgx, SKIP LOCKED) and `JobHandler` (service executor) keep the
   consumer loop decoupled from business logic; retry/backoff policy lives in
   the consumer.
 - Domain types do not import WhatsMeow or HTTP packages.
 - Payload fields that cannot be reconstructed are omitted rather than
   invented.
-- `entry[].id` comes from `BUSINESS_ACCOUNT_ID`; it cannot be derived from a
-  normal WhatsApp sender number.
+- `entry[].id` comes from the session's `business_account_id`, falling back to
+  `BUSINESS_ACCOUNT_ID`; it cannot be derived from a normal WhatsApp sender
+  number.
 - `config` stays dependency-free: devices are provisioned from the `sessions`
-  table; `cmd/main.go` boot-syncs stored sessions into `whatsmeow.DeviceSpec`.
+  table; `cmd/main.go` boot-syncs stored sessions into `DeviceManager` via
+  `ListSessions` → `EnsureDevice` → `ConnectStored`.
 
 ## Deferred Work
 
@@ -225,20 +257,30 @@ Paths are relative to `services/worker/` unless noted.
 - `docs/api-mapping-webhook.md`: source mapping specification.
 - `.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
 - `internal/adapters/whatsmeow/handler.go`: raw WhatsMeow event translation.
+- `internal/adapters/whatsmeow/manager.go`: `DeviceManager` — manager
+  goroutine, EnsureDevice/Pair/Logout/ConnectStored routing, ActiveDevices,
+  Shutdown, Sender lookup (implements `ports.DeviceManager` +
+  `ports.OutboundSenderProvider`).
+- `internal/adapters/whatsmeow/actor.go`: per-device actor goroutine
+  (`deviceRef`) — pairCtx/QR channel, connect/reconnect pending flags,
+  cmdConnect/cmdPair/cmdLogout/cmdStop handling.
 - `internal/adapters/whatsmeow/client.go`: per-device WhatsMeow lifecycle, send
-  queue, and reconnect loop.
-- `internal/adapters/whatsmeow/registry.go`: multi-device registry keyed by
-  `phone_number_id` (implements `ports.OutboundSenderProvider`).
+  queue, QR login and reconnect handling, `hasSession()` guard.
+- `internal/core/ports/device_manager.go`: `DeviceManager` + `ActiveDeviceProvider`
+  + `ErrAlreadyPaired` sentinel.
 - `internal/service/message.go`: WABA payload mapping, logging, and forwarding
   via the webhook-config provider.
-- `internal/service/executor.go`: outbound job executor (`ports.JobHandler`).
+- `internal/service/executor.go`: outbound job executor (`ports.JobHandler`)
+  with lazy device ensure via `SessionStore.GetByPhoneNumberID`.
 - `internal/adapters/webhook/client.go`: HTTP, HMAC, timeout, and response handling.
-- `internal/adapters/queue/`: pgx `JobStore` (SKIP LOCKED) + poll consumer.
+- `internal/adapters/queue/`: pgx `JobStore` (SKIP LOCKED) + poll consumer +
+  `SessionStore` (ListSessions/GetByPhoneNumberID/UpdateHeartbeats) +
+  batched `Heartbeat`.
 - `internal/adapters/apiconfig/client.go`: webhook-config provider (TTL cache).
-- `internal/core/domain/`: internal event, payload, and job models.
-- `internal/core/ports/`: service contracts (sender, job store/handler, webhook
-  config provider).
-- `cmd/main.go`: dependency composition and shutdown lifecycle.
+- `internal/core/domain/`: internal event, payload, job, and session models.
+- `internal/core/ports/`: service contracts (sender, device manager, job
+  store/handler, session store, webhook config provider).
+- `cmd/main.go`: dependency composition, boot sync, and shutdown lifecycle.
 - `internal/service/outbound.go`: outbound validation (reused by the executor).
 - `cmd/migrate/main.go`: golang-migrate migration runner (`SUPABASE_DSN`).
 - `shared/db/migrations/`: Supabase schema migrations (golang-migrate).
@@ -271,20 +313,21 @@ git diff --check    passed
   construction.
 - Update tests and `.opencode/plans/waba-webhook-mapping.md` for every new
   mapping or runtime behavior change.
+- Follow the repo `AGENTS.md` workflow: define milestones before large plans
+  and keep `HANDOFF.md` current as work lands.
 - Run `gofmt`, `go test ./...`, and `go vet ./...` before handoff.
 - Do not commit `whatsmeow.db`, credentials, or `.opencode` index artifacts.
 
 ## Latest Verification
 
-```text
-go test ./...        32 passed
-go test -race ./... 32 passed
-go vet ./...        passed
-git diff --check    passed
-```
+M9, run against the compose stack:
 
-A manual Direct Send smoke test was completed successfully for recipient
-`6285293322073` using the text request documented in `README.md`.
+```text
+worker: gofmt clean; go vet clean; go test ./... 91 passed (10 packages)
+        [integration tests run with TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5433/waba?sslmode=disable]
+api:    tsc clean; vitest 139 passed + 25 skipped (unit); 25 passed (integration,
+        run with TEST_SUPABASE_URL=http://localhost:3001 and the dev HS256 JWT)
+```
 
 ## Direct Send (Removed in M5)
 
