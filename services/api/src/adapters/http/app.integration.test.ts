@@ -15,6 +15,11 @@
  * Requires all migrations applied (000001–000005: jobs, webhook_configs,
  * sessions incl. business_account_id, webhook management) and PostgREST schema
  * reloaded.
+ *
+ * Coverage includes the M1 auth and CORS work: Bearer + Basic auth against
+ * API_AUTH_TOKEN (with the WWW-Authenticate header on 401), and the
+ * `/api/v1/*` CORS middleware (allowed-origin preflight/GET, disallowed
+ * origin, and the CORS-disabled configuration).
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -40,6 +45,7 @@ const describeIntegration = TEST_SUPABASE_URL
 const PREFIX = `itest-${Date.now()}-`;
 
 let app: Hono;
+let config: Config;
 let client: PostgrestClient;
 
 describeIntegration("API integration (real PostgREST + Postgres)", () => {
@@ -49,7 +55,7 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
         "TEST_SUPABASE_SERVICE_ROLE_KEY is required when TEST_SUPABASE_URL is set",
       );
     }
-    const config: Config = {
+    const configValue: Config = {
       port: 0,
       supabaseUrl: TEST_SUPABASE_URL,
       supabaseServiceRoleKey: TEST_SUPABASE_SERVICE_ROLE_KEY,
@@ -57,8 +63,13 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
       internalToken: INTERNAL_TOKEN,
       sendTimeoutMs: 2000,
       resultPollMs: 100,
+      // The main app instance serves the dashboard origin so the allowed-origin
+      // CORS path is exercised. The CORS describe block builds a second instance
+      // with CORS disabled (`corsOrigins: []`) for the off case.
+      corsOrigins: ["http://localhost:5173"],
     };
-    app = buildApp(config);
+    config = configValue;
+    app = buildApp(configValue);
     client = new PostgrestClient(TEST_SUPABASE_URL, {
       headers: {
         apikey: TEST_SUPABASE_SERVICE_ROLE_KEY,
@@ -78,12 +89,20 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
   /** Dispatch a real HTTP request through the Hono app. */
   function req(
     path: string,
-    opts: { method?: string; body?: unknown; token?: string } = {},
+    opts: {
+      method?: string;
+      body?: unknown;
+      token?: string;
+      headers?: Record<string, string>;
+    } = {},
   ): Promise<Response> {
-    const { method = "GET", body, token = API_TOKEN } = opts;
+    const { method = "GET", body, token = API_TOKEN, headers: extraHeaders = {} } = opts;
     const headers: Record<string, string> = {};
     if (token !== "") headers.Authorization = `Bearer ${token}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
+    // Custom headers win, e.g. to send a Basic Authorization header instead of
+    // the default Bearer token.
+    Object.assign(headers, extraHeaders);
     return Promise.resolve(
       app.request(path, {
         method,
@@ -112,6 +131,43 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
         method: "POST",
         body: { phone_number_id: `${PREFIX}none` },
         token: "",
+      });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe("auth schemes (Bearer + Basic)", () => {
+    it("accepts a valid bearer token", async () => {
+      const res = await req("/api/v1/sessions");
+      expect(res.status).toBe(200);
+    });
+
+    it("accepts Basic auth when the password equals the API token", async () => {
+      const cred = Buffer.from(`nexus:${API_TOKEN}`).toString("base64");
+      const res = await req("/api/v1/sessions", {
+        headers: { Authorization: `Basic ${cred}` },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("rejects a Basic header with a wrong password and sets www-authenticate", async () => {
+      const cred = Buffer.from("nexus:wrong").toString("base64");
+      const res = await req("/api/v1/sessions", {
+        headers: { Authorization: `Basic ${cred}` },
+      });
+      expect(res.status).toBe(401);
+      expect(res.headers.get("www-authenticate")).toBe('Basic realm="nexus"');
+    });
+
+    it("rejects a request with no auth header and sets www-authenticate", async () => {
+      const res = await req("/api/v1/sessions", { token: "" });
+      expect(res.status).toBe(401);
+      expect(res.headers.get("www-authenticate")).toBe('Basic realm="nexus"');
+    });
+
+    it("rejects a malformed Basic header", async () => {
+      const res = await req("/api/v1/sessions", {
+        headers: { Authorization: "Basic not-base64!" },
       });
       expect(res.status).toBe(401);
     });
@@ -421,6 +477,69 @@ describeIntegration("API integration (real PostgREST + Postgres)", () => {
       const fetched = await req(`/api/v1/sessions/${sessionBody.id}`);
       const fetchedBody = (await fetched.json()) as { last_seen_at: string | null };
       expect(fetchedBody.last_seen_at).toBeTruthy();
+    });
+  });
+
+  describe("CORS", () => {
+    const ALLOWED = "http://localhost:5173";
+    const DISALLOWED = "http://evil.example";
+
+    // Second, cheap app instance with CORS disabled for the off case. Built in
+    // beforeAll so it can reference the module-scoped `config` (which the outer
+    // beforeAll populates).
+    let appCorsOff: Hono;
+    beforeAll(() => {
+      appCorsOff = buildApp({ ...config, corsOrigins: [] });
+    });
+
+    it("answers an OPTIONS preflight from an allowed origin with CORS headers", async () => {
+      const res = await app.request("/api/v1/sessions", {
+        method: "OPTIONS",
+        headers: {
+          Origin: ALLOWED,
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Headers": "authorization, content-type",
+        },
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("access-control-allow-origin")).toBe(ALLOWED);
+
+      const methods = res.headers.get("access-control-allow-methods") ?? "";
+      for (const m of ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]) {
+        expect(methods).toContain(m);
+      }
+
+      const allowHeaders = (
+        res.headers.get("access-control-allow-headers") ?? ""
+      ).toLowerCase();
+      expect(allowHeaders).toContain("authorization");
+      expect(allowHeaders).toContain("content-type");
+    });
+
+    it("sets no access-control-allow-origin for a disallowed origin", async () => {
+      const res = await app.request("/api/v1/sessions", {
+        method: "OPTIONS",
+        headers: { Origin: DISALLOWED, "Access-Control-Request-Method": "GET" },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    });
+
+    it("returns no CORS headers when CORS is disabled", async () => {
+      const res = await appCorsOff.request("/api/v1/sessions", {
+        method: "OPTIONS",
+        headers: { Origin: ALLOWED, "Access-Control-Request-Method": "GET" },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+      expect(res.headers.get("access-control-allow-methods")).toBeNull();
+      expect(res.headers.get("access-control-allow-headers")).toBeNull();
+    });
+
+    it("applies CORS to a real GET from the allowed origin", async () => {
+      const res = await req("/api/v1/sessions", {
+        headers: { Origin: ALLOWED },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("access-control-allow-origin")).toBe(ALLOWED);
     });
   });
 });
