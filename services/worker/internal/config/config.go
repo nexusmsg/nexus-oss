@@ -3,17 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
-
-// Device is one WhatsApp device managed by the worker. It is the config
-// package's own type; cmd maps it to the whatsmeow adapter's DeviceSpec.
-type Device struct {
-	PhoneNumberID string
-	Number        string
-	DisplayPhone  string
-}
 
 type Config struct {
 	SupabaseDSN       string
@@ -26,7 +17,6 @@ type Config struct {
 	MaxAttempts       int
 	WebhookConfigTTL  time.Duration
 	HeartbeatInterval time.Duration
-	Devices           []Device
 }
 
 func Load() (*Config, error) {
@@ -42,10 +32,6 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	devices, err := parseDevices(getEnv("WABA_DEVICES", ""))
-	if err != nil {
-		return nil, err
-	}
 	return &Config{
 		SupabaseDSN:       getEnv("SUPABASE_DSN", ""),
 		MigrationsDir:     getEnv("MIGRATIONS_DIR", "../../shared/db/migrations"),
@@ -57,41 +43,7 @@ func Load() (*Config, error) {
 		MaxAttempts:       getEnvInt("MAX_ATTEMPTS", 3),
 		WebhookConfigTTL:  webhookConfigTTL,
 		HeartbeatInterval: heartbeatInterval,
-		Devices:           devices,
 	}, nil
-}
-
-// parseDevices parses comma-separated `phone_number_id:number` pairs from
-// WABA_DEVICES. An empty value yields no devices; malformed entries are
-// rejected with an error naming the offending entry.
-func parseDevices(raw string) ([]Device, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	entries := strings.Split(raw, ",")
-	devices := make([]Device, 0, len(entries))
-	for _, entry := range entries {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		if strings.Count(entry, ":") != 1 {
-			return nil, fmt.Errorf("config: malformed WABA_DEVICES entry %q: want phone_number_id:number", entry)
-		}
-		phoneNumberID, number, ok := strings.Cut(entry, ":")
-		phoneNumberID = strings.TrimSpace(phoneNumberID)
-		number = strings.TrimSpace(number)
-		if !ok || phoneNumberID == "" || number == "" {
-			return nil, fmt.Errorf("config: malformed WABA_DEVICES entry %q: want phone_number_id:number", entry)
-		}
-		devices = append(devices, Device{
-			PhoneNumberID: phoneNumberID,
-			Number:        number,
-			// WABA_DEVICES carries no display phone; default to the number.
-			DisplayPhone: number,
-		})
-	}
-	return devices, nil
 }
 
 func getEnv(key, fallback string) string {

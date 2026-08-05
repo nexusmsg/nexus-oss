@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func newTestClient(send func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)) *Client {
@@ -89,5 +92,31 @@ func TestClientSendCanceledQueuedMessageIsNotSent(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("send calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestClientConnectWithoutSessionReturnsErrNotPaired(t *testing.T) {
+	// A device with no stored session must not enter a QR flow from a plain
+	// connect (startup or reconnect); pairing is job-driven via Pair.
+	raw := whatsmeow.NewClient(&store.Device{}, waLog.Noop)
+	client := newClient(raw, "628111111111", nil)
+	defer client.Disconnect()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := client.connect(ctx); !errors.Is(err, ErrNotPaired) {
+		t.Fatalf("connect() error = %v, want ErrNotPaired", err)
+	}
+}
+
+func TestClientPairAlreadyPairedReturnsErrAlreadyPaired(t *testing.T) {
+	// A device with a stored session must refuse pairing via ports.ErrAlreadyPaired.
+	raw := whatsmeow.NewClient(&store.Device{ID: &types.JID{User: "6281"}}, waLog.Noop)
+	client := newClient(raw, "628111111111", nil)
+	defer client.Disconnect()
+
+	_, err := client.Pair(context.Background())
+	if !errors.Is(err, ports.ErrAlreadyPaired) {
+		t.Fatalf("Pair() error = %v, want ports.ErrAlreadyPaired", err)
 	}
 }

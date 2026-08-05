@@ -22,12 +22,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	if len(cfg.Devices) == 0 {
-		log.Println("warning: no devices configured (WABA_DEVICES empty)")
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	storeDSN := cfg.StoreDSN
 	if storeDSN == "" {
@@ -40,7 +36,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize whatsmeow store: %v", err)
 	}
-	defer container.Close()
 
 	if cfg.SupabaseDSN == "" {
 		log.Fatal("SUPABASE_DSN must be set to the jobs Postgres DSN")
@@ -49,31 +44,35 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize queue store: %v", err)
 	}
-	defer store.Close()
 
 	sessionStore, err := queue.NewSessionStore(store.Pool(), log.Default())
 	if err != nil {
 		log.Fatalf("initialize session store: %v", err)
 	}
-	heartbeat := queue.NewHeartbeat(store.Pool(), cfg.HeartbeatInterval, log.Default())
 
 	provider := apiconfig.NewClient(cfg.APIURL, cfg.InternalToken, cfg.WebhookConfigTTL, log.Default())
 	svc := service.NewMessage(log.Default(), provider)
 
-	specs := make([]whatsmeow.DeviceSpec, 0, len(cfg.Devices))
-	for _, device := range cfg.Devices {
-		specs = append(specs, whatsmeow.DeviceSpec{
-			PhoneNumberID: device.PhoneNumberID,
-			Number:        device.Number,
-			DisplayPhone:  device.DisplayPhone,
-		})
-	}
-	registry, err := whatsmeow.NewRegistry(ctx, container, specs, svc, cfg.BusinessAccountID, log.Default())
+	manager := whatsmeow.NewDeviceManager(container, svc, cfg.BusinessAccountID, log.Default())
+	heartbeat := queue.NewHeartbeat(sessionStore, manager, cfg.HeartbeatInterval, log.Default())
+
+	// Boot sync: provision a device per stored session. Partial failures must
+	// not kill boot, so per-device errors are logged and skipped.
+	sessions, err := sessionStore.ListSessions(ctx)
 	if err != nil {
-		log.Fatalf("initialize whatsapp registry: %v", err)
+		log.Printf("whatsmeow: list sessions at boot: %v", err)
+	} else {
+		for _, s := range sessions {
+			if err := manager.EnsureDevice(ctx, s); err != nil {
+				log.Printf("whatsmeow: ensure device %s: %v", s.PhoneNumberID, err)
+			}
+		}
+	}
+	if err := manager.ConnectStored(ctx); err != nil {
+		log.Printf("whatsmeow: connect stored devices: %v", err)
 	}
 
-	executor := service.NewJobExecutor(registry, sessionStore, registry)
+	executor := service.NewJobExecutor(manager, sessionStore, manager)
 	consumer := queue.NewConsumer(store, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
 
 	consumerErr := make(chan error, 1)
@@ -86,24 +85,44 @@ func main() {
 		heartbeatErr <- heartbeat.Run(ctx)
 	}()
 
-	// Partial device failures must not kill the worker; the registry keeps the
-	// remaining devices connected and retries the failed ones via its
-	// Disconnected handler.
-	if err := registry.Connect(ctx); err != nil {
-		log.Printf("whatsmeow: connect: %v (continuing with connected devices)", err)
-	}
-	defer registry.DisconnectAll()
+	// Wait for the first goroutine to stop or an OS signal, then shut down in
+	// order: signal ctx cancel, stop consumer & heartbeat, shutdown devices,
+	// close the stores.
+	consumerFinished := false
+	heartbeatFinished := false
 
 	select {
 	case err := <-consumerErr:
+		consumerFinished = true
 		if err != nil {
 			log.Printf("queue consumer stopped: %v", err)
 		}
 	case err := <-heartbeatErr:
+		heartbeatFinished = true
 		if err != nil {
 			log.Printf("heartbeat stopped: %v", err)
 		}
 	case <-ctx.Done():
 		log.Println("shutting down")
 	}
+
+	stop()
+
+	if !consumerFinished {
+		if err := <-consumerErr; err != nil {
+			log.Printf("queue consumer stopped: %v", err)
+		}
+	}
+	if !heartbeatFinished {
+		if err := <-heartbeatErr; err != nil {
+			log.Printf("heartbeat stopped: %v", err)
+		}
+	}
+
+	if err := manager.Shutdown(context.Background()); err != nil {
+		log.Printf("whatsmeow: manager shutdown: %v", err)
+	}
+
+	container.Close()
+	store.Close()
 }

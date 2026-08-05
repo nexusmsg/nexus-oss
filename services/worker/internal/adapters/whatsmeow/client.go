@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -17,6 +18,10 @@ import (
 // reconnectInterval is the delay between reconnect attempts after an
 // unexpected disconnect.
 const reconnectInterval = 5 * time.Second
+
+// ErrNotPaired reports that a device has no stored session, so it cannot
+// connect until a pairing job pairs it through Pair.
+var ErrNotPaired = errors.New("whatsmeow: device is not paired")
 
 // Client is a per-device WhatsApp sender. It serializes outbound sends through
 // a bounded worker queue and owns the connection lifecycle of a single device.
@@ -29,9 +34,6 @@ type Client struct {
 	workerDone chan struct{}
 	stateMu    sync.RWMutex
 	closed     bool
-	// reconnectGate serializes reconnect loops so concurrent Disconnected
-	// events cannot spawn overlapping connect attempts.
-	reconnectGate chan struct{}
 	// number identifies the device in QR output and log lines.
 	number string
 	logger *log.Logger
@@ -60,13 +62,12 @@ func newClient(raw *whatsmeow.Client, number string, logger *log.Logger) *Client
 		send: func(ctx context.Context, to types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
 			return raw.SendMessage(ctx, to, message)
 		},
-		sendQueue:     make(chan sendCommand, 32),
-		workerCtx:     workerCtx,
-		workerStop:    workerStop,
-		workerDone:    make(chan struct{}),
-		reconnectGate: make(chan struct{}, 1),
-		number:        number,
-		logger:        logger,
+		sendQueue:  make(chan sendCommand, 32),
+		workerCtx:  workerCtx,
+		workerStop: workerStop,
+		workerDone: make(chan struct{}),
+		number:     number,
+		logger:     logger,
 	}
 	go c.sendLoop()
 	return c
@@ -77,37 +78,21 @@ func (c *Client) Connect(ctx context.Context) error {
 	return c.connect(ctx)
 }
 
-// connect establishes the websocket connection for the device. Devices without
-// a stored session print QR codes for manual pairing.
+// hasSession reports whether the device has a stored WhatsApp session, i.e.
+// it has been paired at least once and can connect without a QR flow.
+func (c *Client) hasSession() bool {
+	return c.client != nil && c.client.Store != nil && c.client.Store.ID != nil
+}
+
+// connect establishes the websocket connection for a device that already has a
+// stored session. Devices without a stored session return ErrNotPaired: QR
+// pairing is driven exclusively by pairing jobs through Pair, so a plain
+// connect (startup or reconnect) never auto-triggers QR output.
 func (c *Client) connect(ctx context.Context) error {
-	if c.client.Store.ID == nil {
-		// No ID stored, new login
-		qrChan, err := c.client.GetQRChannel(ctx)
-		if err != nil {
-			return err
-		}
-		err = c.client.ConnectContext(ctx)
-		if err != nil {
-			return err
-		}
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				// Render the QR code here
-				// e.g. qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				// or just manually `echo 2@... | qrencode -t ansiutf8` in a terminal
-				fmt.Printf("QR code [%s]: %s\n", c.number, evt.Code)
-			} else {
-				fmt.Printf("Login event [%s]: %s\n", c.number, evt.Event)
-			}
-		}
-	} else {
-		// Already logged in, just connect
-		err := c.client.ConnectContext(ctx)
-		if err != nil {
-			return err
-		}
+	if !c.hasSession() {
+		return ErrNotPaired
 	}
-	return nil
+	return c.client.ConnectContext(ctx)
 }
 
 // Pair runs a QR pairing flow for the device and returns the first QR code.
@@ -118,7 +103,7 @@ func (c *Client) Pair(ctx context.Context) (string, error) {
 		return "", errors.New("whatsmeow: client or store is nil")
 	}
 	if c.client.Store.ID != nil {
-		return "", errors.New("whatsmeow: already connected")
+		return "", ports.ErrAlreadyPaired
 	}
 	qrChan, err := c.client.GetQRChannel(ctx)
 	if err != nil {
@@ -158,42 +143,6 @@ func (c *Client) Logout(ctx context.Context) error {
 		return fmt.Errorf("whatsmeow: logout: %w", err)
 	}
 	return nil
-}
-
-// reconnectLoop reconnects the device after an unexpected disconnect, retrying
-// every reconnectInterval while ctx is alive. It returns on the first
-// successful connect or when ctx or the send worker is stopped, so shutdown
-// never leaks reconnect goroutines.
-func (c *Client) reconnectLoop(ctx context.Context) {
-	select {
-	case c.reconnectGate <- struct{}{}:
-		defer func() { <-c.reconnectGate }()
-	case <-ctx.Done():
-		return
-	case <-c.workerCtx.Done():
-		return
-	}
-	ticker := time.NewTicker(reconnectInterval)
-	defer ticker.Stop()
-	for {
-		err := c.connect(ctx)
-		switch {
-		case err == nil:
-			return
-		case errors.Is(err, whatsmeow.ErrAlreadyConnected):
-			// whatsmeow reconnected before us, nothing left to do.
-			return
-		default:
-			c.logger.Printf("whatsmeow: reconnect device %s: %v", c.number, err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.workerCtx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 func (c *Client) Disconnect() {
