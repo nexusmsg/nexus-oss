@@ -24,11 +24,28 @@ WhatsMeow → WABA mapping rules, and the verification requirements. Run
 `gofmt`, `go test ./...`, and `go vet ./...` from `services/worker/` before
 handoff.
 
+## Component-Level AGENTS.md
+
+Each component area has its own nested rules file — check it before touching
+that area:
+
+- `services/api/AGENTS.md` — Hono API: hexagonal layout, route/auth
+  conventions, PostgREST rules, `npm test` + integration gating.
+- `services/worker/AGENTS.md` — Go worker (see above).
+- `shared/AGENTS.md` — DB migrations: file conventions, idempotency, Docker
+  rebuild requirement, doc sync.
+- `apps/AGENTS.md` — frontend area (placeholder; conventions to be filled in
+  once code lands).
+
 ## Plans and Docs
 
 - Architecture plan: `.opencode/plans/split-architecture.md`
 - Worker handoff: `HANDOFF.md`
 - Webhook mapping spec: `services/worker/docs/api-mapping-webhook.md`
+- Docs graph: `docs/README.md` is the root index; `docs/services/README.md`
+  indexes the services, each service has its own section docs under
+  `docs/services/<name>/`, plus `docs/shared/`, `docs/apps/`, and
+  `docs/architecture/`.
 
 ## Planning and Milestones
 
@@ -41,6 +58,10 @@ handoff.
 - Record milestone status in `.opencode/plans/split-architecture.md` (mark
   `(Completed)` and append verification evidence) and reference the milestone
   in commit messages, e.g. `feat: ... (M9)`.
+- Every plan or milestone that changes code must include a documentation
+  update: extend the matching section docs under `docs/` (routes, config,
+  architecture, migrations, flows) in the same milestone, and keep the index
+  links in `docs/README.md` / `docs/services/README.md` accurate.
 
 ## Handoff Logging
 
