@@ -43,10 +43,9 @@ type deviceRef struct {
 	phoneNumberID string
 
 	lifecycle chan lifecycleCmd
-	// mgr is the manager's command channel, used by the actor to request map
-	// removal after a successful logout. The manager loop performs the removal,
-	// never the actor.
-	mgr chan mgrCommand
+	// onRemoved removes the device from the manager's routing maps after a
+	// successful logout. Removal is the manager's job, never the actor's.
+	onRemoved func(phoneNumberID string)
 
 	pairCtx    context.Context
 	pairCancel context.CancelFunc
@@ -59,20 +58,20 @@ type deviceRef struct {
 
 	done chan struct{}
 	ctx  context.Context
-	// cancel stops the actor goroutine; it is a child of the manager's ctx.
+	// cancel stops the actor goroutine; Shutdown and logout call it directly.
 	cancel context.CancelFunc
 }
 
-// newDeviceRef builds a device actor whose ctx is a child of parent (the
-// manager's ctx) so manager shutdown cancels every actor.
-func newDeviceRef(client *Client, phoneNumberID string, parent context.Context, mgr chan mgrCommand) *deviceRef {
-	ctx, cancel := context.WithCancel(parent)
+// newDeviceRef builds a device actor whose ctx is standalone: Shutdown and
+// logout cancel it directly.
+func newDeviceRef(client *Client, phoneNumberID string, onRemoved func(phoneNumberID string)) *deviceRef {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &deviceRef{
 		client:        client,
 		number:        client.number,
 		phoneNumberID: phoneNumberID,
 		lifecycle:     make(chan lifecycleCmd, 4),
-		mgr:           mgr,
+		onRemoved:     onRemoved,
 		done:          make(chan struct{}),
 		ctx:           ctx,
 		cancel:        cancel,
@@ -149,8 +148,8 @@ func (ref *deviceRef) pair(cmd lifecycleCmd) {
 	}
 }
 
-// logout disconnects the device and, on success, asks the manager to remove it
-// from its routing maps.
+// logout disconnects the device and, on success, removes it from the
+// manager's routing maps.
 func (ref *deviceRef) logout(cmd lifecycleCmd) {
 	ref.cancelPair()
 	err := ref.client.Logout(cmd.ctx)
@@ -158,10 +157,13 @@ func (ref *deviceRef) logout(cmd lifecycleCmd) {
 		cmd.resp <- lifecycleResponse{err: err}
 	}
 	if err == nil {
-		select {
-		case ref.mgr <- mgrCommand{kind: mgrRemoveDevice, phoneNumberID: ref.phoneNumberID}:
-		case <-ref.ctx.Done():
+		if ref.onRemoved != nil {
+			ref.onRemoved(ref.phoneNumberID)
 		}
+		// Actor has been removed from the manager's routing maps; exit
+		// immediately to avoid a goroutine leak (no further commands will
+		// arrive on ref.lifecycle after removal).
+		ref.cancel()
 	}
 }
 

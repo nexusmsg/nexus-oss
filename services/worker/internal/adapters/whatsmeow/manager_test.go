@@ -11,26 +11,20 @@ import (
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
-// newTestManager builds a DeviceManager with a running loop and empty maps so
-// unit tests stay hermetic (no sqlstore container, no network).
+// newTestManager builds a DeviceManager with empty maps so unit tests stay
+// hermetic (no sqlstore container, no network).
 func newTestManager() *DeviceManager {
-	ctx, cancel := context.WithCancel(context.Background())
 	m := &DeviceManager{
-		devices:  make(map[string]*deviceRef),
-		numbers:  make(map[string]string),
-		cmds:     make(chan mgrCommand),
-		loopDone: make(chan struct{}),
-		ctx:      ctx,
-		cancel:   cancel,
-		logger:   log.Default(),
+		devices: make(map[string]*deviceRef),
+		numbers: make(map[string]string),
+		logger:  log.Default(),
 	}
-	go m.run()
 	return m
 }
 
 // addTestRef seeds a running actor for a phone number ID.
 func (m *DeviceManager) addTestRef(phoneNumberID string, client *Client) *deviceRef {
-	ref := newDeviceRef(client, phoneNumberID, m.ctx, m.cmds)
+	ref := newDeviceRef(client, phoneNumberID, m.removeDevice)
 	m.devices[phoneNumberID] = ref
 	go ref.run()
 	return ref
@@ -148,7 +142,7 @@ func TestShutdownEmptyIsNoOp(t *testing.T) {
 	}
 }
 
-func TestShutdownStopsActorsAndSendLoops(t *testing.T) {
+func TestShutdownStopsActorsAndClosesClients(t *testing.T) {
 	m := newTestManager()
 	client := newTestClient(nil)
 	m.addTestRef("phone-a", client)
@@ -157,9 +151,7 @@ func TestShutdownStopsActorsAndSendLoops(t *testing.T) {
 		t.Fatalf("Shutdown() error = %v, want nil", err)
 	}
 
-	select {
-	case <-client.workerDone:
-	default:
-		t.Fatal("Shutdown did not stop the client's send worker")
+	if !client.closed {
+		t.Fatal("Shutdown did not close the client")
 	}
 }

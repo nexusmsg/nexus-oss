@@ -12,6 +12,7 @@ Path: `services/worker/`
 |---------|---------|
 | [architecture.md](architecture.md) | Layered hexagonal layout, runtime flow |
 | [device-manager.md](device-manager.md) | Dynamic device provisioning + actor model |
+| [channels.md](channels.md) | Channel inventory, flow diagrams, simplification analysis |
 | [queue.md](queue.md) | Job store, consumer, session store, heartbeat |
 | [configuration.md](configuration.md) | Environment variables and defaults |
 | [testing.md](testing.md) | Hermetic + live integration tests |

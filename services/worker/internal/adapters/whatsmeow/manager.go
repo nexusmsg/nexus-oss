@@ -2,7 +2,6 @@ package whatsmeow
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -16,30 +15,9 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-// mgrCommandKind enumerates the commands the manager loop processes.
-type mgrCommandKind int
-
-const (
-	mgrEnsureDevice mgrCommandKind = iota
-	mgrPair
-	mgrLogout
-	mgrRemoveDevice
-)
-
-// mgrCommand is one command routed to the manager goroutine. Commands that
-// need a result carry a response channel; the caller waits on it, never the
-// manager loop.
-type mgrCommand struct {
-	kind          mgrCommandKind
-	session       domain.Session
-	phoneNumberID string
-	ctx           context.Context
-	resp          chan lifecycleResponse
-}
-
-// DeviceManager provisions and drives per-device lifecycle. One manager
-// goroutine routes lifecycle commands to per-device actor goroutines, replacing
-// the static env-driven registry with dynamic sessions-table provisioning.
+// DeviceManager provisions and drives per-device lifecycle. It routes lifecycle
+// commands directly to per-device actor goroutines, replacing the static
+// env-driven registry with dynamic sessions-table provisioning.
 type DeviceManager struct {
 	mu      sync.RWMutex
 	devices map[string]*deviceRef
@@ -51,22 +29,17 @@ type DeviceManager struct {
 	messageService ports.MessageService
 	fallbackBAID   string
 	logger         *log.Logger
-
-	cmds     chan mgrCommand
-	loopDone chan struct{}
-	ctx      context.Context
-	cancel   context.CancelFunc
 }
 
 var _ ports.DeviceManager = (*DeviceManager)(nil)
 var _ ports.OutboundSenderProvider = (*DeviceManager)(nil)
 
-// NewDeviceManager starts the manager goroutine.
+// NewDeviceManager builds a manager. Every mutation is serialized by the
+// manager's mutex, so no manager goroutine is needed.
 func NewDeviceManager(container *sqlstore.Container, messageService ports.MessageService, fallbackBusinessAccountID string, logger *log.Logger) *DeviceManager {
 	if logger == nil {
 		logger = log.Default()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	return &DeviceManager{
 		devices:        make(map[string]*deviceRef),
 		numbers:        make(map[string]string),
@@ -74,67 +47,24 @@ func NewDeviceManager(container *sqlstore.Container, messageService ports.Messag
 		messageService: messageService,
 		fallbackBAID:   fallbackBusinessAccountID,
 		logger:         logger,
-		cmds:           make(chan mgrCommand),
-		loopDone:       make(chan struct{}),
-		ctx:            ctx,
-		cancel:         cancel,
-	}
-}
-
-// run is the manager goroutine. It processes commands one at a time and never
-// waits on an actor response.
-func (m *DeviceManager) run() {
-	defer close(m.loopDone)
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case cmd := <-m.cmds:
-			switch cmd.kind {
-			case mgrEnsureDevice:
-				m.handleEnsure(cmd)
-			case mgrPair:
-				m.handlePair(cmd)
-			case mgrLogout:
-				m.handleLogout(cmd)
-			case mgrRemoveDevice:
-				m.removeDevice(cmd.phoneNumberID)
-			}
-		}
 	}
 }
 
 // EnsureDevice provisions a device for the session. It is idempotent and
-// auto-connects devices that already have a stored session.
+// auto-connects devices that already have a stored session. All mutation runs
+// synchronously under the manager lock.
 func (m *DeviceManager) EnsureDevice(ctx context.Context, session domain.Session) error {
-	resp := make(chan lifecycleResponse, 1)
-	if err := m.send(mgrCommand{kind: mgrEnsureDevice, session: session, resp: resp}, ctx); err != nil {
-		return err
-	}
-	return m.wait(resp, ctx).err
-}
-
-// handleEnsure provisions a device inside the manager loop. The idempotency
-// and duplicate-number checks live here so they are serialized.
-func (m *DeviceManager) handleEnsure(cmd mgrCommand) {
-	if cmd.resp == nil {
-		return
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	session := cmd.session
 	if _, ok := m.devices[session.PhoneNumberID]; ok {
-		cmd.resp <- lifecycleResponse{} // idempotent no-op
-		return
+		return nil // idempotent no-op
 	}
 	if other, ok := m.numbers[session.Number]; ok && other != session.PhoneNumberID {
-		cmd.resp <- lifecycleResponse{err: fmt.Errorf("whatsmeow: number %s already registered to phone number id %s", session.Number, other)}
-		return
+		return fmt.Errorf("whatsmeow: number %s already registered to phone number id %s", session.Number, other)
 	}
-	device, err := resolveDevice(m.ctx, m.container, session.Number)
+	device, err := resolveDevice(ctx, m.container, session.Number)
 	if err != nil {
-		cmd.resp <- lifecycleResponse{err: fmt.Errorf("whatsmeow: resolve device for %s: %w", session.Number, err)}
-		return
+		return fmt.Errorf("whatsmeow: resolve device for %s: %w", session.Number, err)
 	}
 	raw := whatsmeow.NewClient(device, waLog.Noop)
 	// Reconnection is owned by the actor, so disable whatsmeow's built-in
@@ -151,9 +81,9 @@ func (m *DeviceManager) handleEnsure(cmd mgrCommand) {
 		displayPhone = session.Number
 	}
 
-	ref := newDeviceRef(client, session.PhoneNumberID, m.ctx, m.cmds)
+	ref := newDeviceRef(client, session.PhoneNumberID, m.removeDevice)
 	handler := NewHandler(m.messageService, baid, session.PhoneNumberID, displayPhone, m.logger)
-	client.AddEventHandler(handler.Handle(m.ctx))
+	client.AddEventHandler(handler.Handle(ref.ctx))
 	client.AddEventHandler(m.disconnectedHandler(ref))
 
 	m.devices[session.PhoneNumberID] = ref
@@ -164,59 +94,46 @@ func (m *DeviceManager) handleEnsure(cmd mgrCommand) {
 		ref.connectPending.Store(true)
 		ref.wakeup()
 	}
-	cmd.resp <- lifecycleResponse{}
+	return nil
 }
 
 // Pair generates a QR code for the given phone number ID.
 func (m *DeviceManager) Pair(ctx context.Context, phoneNumberID string) (string, error) {
-	resp := make(chan lifecycleResponse, 1)
-	if err := m.send(mgrCommand{kind: mgrPair, phoneNumberID: phoneNumberID, ctx: ctx, resp: resp}, ctx); err != nil {
-		return "", err
-	}
-	r := m.wait(resp, ctx)
-	return r.qr, r.err
-}
-
-// handlePair forwards a pair command to the device actor.
-func (m *DeviceManager) handlePair(cmd mgrCommand) {
-	if cmd.resp == nil {
-		return
-	}
-	ref, ok := m.lookup(cmd.phoneNumberID)
+	ref, ok := m.lookup(phoneNumberID)
 	if !ok {
-		cmd.resp <- lifecycleResponse{err: &ports.ErrSenderNotFound{PhoneNumberID: cmd.phoneNumberID}}
-		return
+		return "", &ports.ErrSenderNotFound{PhoneNumberID: phoneNumberID}
+	}
+	resp := make(chan lifecycleResponse, 1)
+	select {
+	case ref.lifecycle <- lifecycleCmd{kind: cmdPair, ctx: ctx, resp: resp}:
+	case <-ref.ctx.Done():
+		return "", &ports.ErrSenderNotFound{PhoneNumberID: phoneNumberID}
 	}
 	select {
-	case ref.lifecycle <- lifecycleCmd{kind: cmdPair, ctx: cmd.ctx, resp: cmd.resp}:
-	case <-ref.ctx.Done():
-		cmd.resp <- lifecycleResponse{err: &ports.ErrSenderNotFound{PhoneNumberID: cmd.phoneNumberID}}
+	case r := <-resp:
+		return r.qr, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
 }
 
 // Logout removes the device on successful logout.
 func (m *DeviceManager) Logout(ctx context.Context, phoneNumberID string) error {
-	resp := make(chan lifecycleResponse, 1)
-	if err := m.send(mgrCommand{kind: mgrLogout, phoneNumberID: phoneNumberID, ctx: ctx, resp: resp}, ctx); err != nil {
-		return err
-	}
-	return m.wait(resp, ctx).err
-}
-
-// handleLogout forwards a logout command to the device actor.
-func (m *DeviceManager) handleLogout(cmd mgrCommand) {
-	if cmd.resp == nil {
-		return
-	}
-	ref, ok := m.lookup(cmd.phoneNumberID)
+	ref, ok := m.lookup(phoneNumberID)
 	if !ok {
-		cmd.resp <- lifecycleResponse{err: &ports.ErrSenderNotFound{PhoneNumberID: cmd.phoneNumberID}}
-		return
+		return &ports.ErrSenderNotFound{PhoneNumberID: phoneNumberID}
+	}
+	resp := make(chan lifecycleResponse, 1)
+	select {
+	case ref.lifecycle <- lifecycleCmd{kind: cmdLogout, ctx: ctx, resp: resp}:
+	case <-ref.ctx.Done():
+		return &ports.ErrSenderNotFound{PhoneNumberID: phoneNumberID}
 	}
 	select {
-	case ref.lifecycle <- lifecycleCmd{kind: cmdLogout, ctx: cmd.ctx, resp: cmd.resp}:
-	case <-ref.ctx.Done():
-		cmd.resp <- lifecycleResponse{err: &ports.ErrSenderNotFound{PhoneNumberID: cmd.phoneNumberID}}
+	case r := <-resp:
+		return r.err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -257,21 +174,16 @@ func (m *DeviceManager) Sender(phoneNumberID string) (ports.MessageSender, error
 	return ref.client, nil
 }
 
-// Shutdown cancels the manager loop and every actor, disconnects each device,
-// and waits for the actors to exit.
+// Shutdown cancels every actor, waits for them to exit, and disconnects each
+// device.
 func (m *DeviceManager) Shutdown(ctx context.Context) error {
-	m.cancel()
 	for _, ref := range m.refsSnapshot() {
 		ref.cancelPair()
-		ref.client.Disconnect()
+		ref.cancel()
 		<-ref.done
+		ref.client.Disconnect()
 	}
-	select {
-	case <-m.loopDone:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }
 
 // disconnectedHandler marks a device for reconnect after an unexpected
@@ -288,7 +200,8 @@ func (m *DeviceManager) disconnectedHandler(ref *deviceRef) func(any) {
 }
 
 // removeDevice removes a device and its reverse index entry. It is called by
-// the manager loop, never by an actor.
+// the actor (via the onRemoved callback) after a successful logout, so no
+// manager lock is held when it runs.
 func (m *DeviceManager) removeDevice(phoneNumberID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -298,31 +211,6 @@ func (m *DeviceManager) removeDevice(phoneNumberID string) {
 	}
 	delete(m.devices, phoneNumberID)
 	delete(m.numbers, ref.number)
-}
-
-// send routes a command to the manager loop.
-func (m *DeviceManager) send(cmd mgrCommand, ctx context.Context) error {
-	select {
-	case m.cmds <- cmd:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-m.ctx.Done():
-		return errors.New("whatsmeow: device manager is shut down")
-	}
-}
-
-// wait blocks on a command response until it arrives or the caller's context
-// or the manager shuts down.
-func (m *DeviceManager) wait(resp chan lifecycleResponse, ctx context.Context) lifecycleResponse {
-	select {
-	case r := <-resp:
-		return r
-	case <-ctx.Done():
-		return lifecycleResponse{err: ctx.Err()}
-	case <-m.ctx.Done():
-		return lifecycleResponse{err: errors.New("whatsmeow: device manager is shut down")}
-	}
 }
 
 // lookup returns the device ref for a phone number ID.

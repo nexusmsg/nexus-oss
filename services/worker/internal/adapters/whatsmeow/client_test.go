@@ -17,19 +17,12 @@ import (
 )
 
 func newTestClient(send func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)) *Client {
-	workerCtx, workerStop := context.WithCancel(context.Background())
-	c := &Client{
-		send:       send,
-		sendQueue:  make(chan sendCommand, 32),
-		workerCtx:  workerCtx,
-		workerStop: workerStop,
-		workerDone: make(chan struct{}),
+	return &Client{
+		send: send,
 	}
-	go c.sendLoop()
-	return c
 }
 
-func TestClientSendUsesExistingWorker(t *testing.T) {
+func TestClientSend(t *testing.T) {
 	var calls atomic.Int32
 	client := newTestClient(func(_ context.Context, jid types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
 		calls.Add(1)
@@ -52,19 +45,41 @@ func TestClientSendUsesExistingWorker(t *testing.T) {
 	}
 }
 
-func TestClientSendCanceledQueuedMessageIsNotSent(t *testing.T) {
+func TestClientSendCanceledContextIsNotSent(t *testing.T) {
+	// A pre-cancelled context must short-circuit before reaching the wire.
+	var calls atomic.Int32
+	client := newTestClient(func(ctx context.Context, _ types.JID, _ *waE2E.Message) (whatsmeow.SendResponse, error) {
+		calls.Add(1)
+		return whatsmeow.SendResponse{ID: "wamid-123"}, nil
+	})
+	defer client.Disconnect()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.Send(ctx, domain.OutboundMessage{To: "6282", Text: &domain.Text{Body: "second"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Send() error = %v, want context.Canceled", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("send calls = %d, want 0 (cancelled send must not reach the wire)", calls.Load())
+	}
+}
+
+func TestClientSendSerializesConcurrentSends(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
 	client := newTestClient(func(ctx context.Context, _ types.JID, _ *waE2E.Message) (whatsmeow.SendResponse, error) {
 		calls.Add(1)
-		close(started)
-		select {
-		case <-release:
-			return whatsmeow.SendResponse{ID: "wamid-123"}, nil
-		case <-ctx.Done():
-			return whatsmeow.SendResponse{}, ctx.Err()
+		if calls.Load() == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return whatsmeow.SendResponse{}, ctx.Err()
+			}
 		}
+		return whatsmeow.SendResponse{ID: "wamid-123"}, nil
 	})
 	defer client.Disconnect()
 
@@ -75,12 +90,19 @@ func TestClientSendCanceledQueuedMessageIsNotSent(t *testing.T) {
 	}()
 	<-started
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := client.Send(ctx, domain.OutboundMessage{To: "6282", Text: &domain.Text{Body: "second"}})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("queued Send() error = %v", err)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := client.Send(context.Background(), domain.OutboundMessage{To: "6282", Text: &domain.Text{Body: "second"}})
+		secondDone <- err
+	}()
+
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second Send() finished while the first is in-flight: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: the second Send is blocked on sendMu until the first returns.
 	}
+
 	close(release)
 	select {
 	case err := <-firstDone:
@@ -90,8 +112,13 @@ func TestClientSendCanceledQueuedMessageIsNotSent(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("first send did not finish")
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("send calls = %d, want 1", calls.Load())
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second Send() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second send did not finish")
 	}
 }
 

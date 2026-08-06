@@ -24,54 +24,32 @@ const reconnectInterval = 5 * time.Second
 // connect until a pairing job pairs it through Pair.
 var ErrNotPaired = errors.New("whatsmeow: device is not paired")
 
-// Client is a per-device WhatsApp sender. It serializes outbound sends through
-// a bounded worker queue and owns the connection lifecycle of a single device.
+// Client is a per-device WhatsApp sender. It serializes outbound sends under
+// sendMu and owns the connection lifecycle of a single device.
 type Client struct {
-	client     *whatsmeow.Client
-	send       func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
-	sendQueue  chan sendCommand
-	workerCtx  context.Context
-	workerStop context.CancelFunc
-	workerDone chan struct{}
-	stateMu    sync.RWMutex
-	closed     bool
+	client *whatsmeow.Client
+	send   func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
+	sendMu sync.Mutex
+	closed bool
 	// number identifies the device in QR output and log lines.
 	number string
 	logger *log.Logger
 }
 
-type sendCommand struct {
-	ctx      context.Context
-	message  domain.OutboundMessage
-	response chan sendResponse
-}
-
-type sendResponse struct {
-	result domain.SendResult
-	err    error
-}
-
-// newClient builds a per-device sender around raw and starts its send worker.
-// The device number labels QR output and log lines.
+// newClient builds a per-device sender around raw. The device number labels QR
+// output and log lines.
 func newClient(raw *whatsmeow.Client, number string, logger *log.Logger) *Client {
 	if logger == nil {
 		logger = log.Default()
 	}
-	workerCtx, workerStop := context.WithCancel(context.Background())
-	c := &Client{
+	return &Client{
 		client: raw,
 		send: func(ctx context.Context, to types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
 			return raw.SendMessage(ctx, to, message)
 		},
-		sendQueue:  make(chan sendCommand, 32),
-		workerCtx:  workerCtx,
-		workerStop: workerStop,
-		workerDone: make(chan struct{}),
-		number:     number,
-		logger:     logger,
+		number: number,
+		logger: logger,
 	}
-	go c.sendLoop()
-	return c
 }
 
 // Connect connects this device, running QR pairing when no session is stored.
@@ -147,102 +125,57 @@ func (c *Client) Logout(ctx context.Context) error {
 }
 
 func (c *Client) Disconnect() {
-	c.stateMu.Lock()
-	if !c.closed {
-		c.closed = true
-		c.workerStop()
-	}
-	c.stateMu.Unlock()
-	<-c.workerDone
+	c.sendMu.Lock()
+	c.closed = true
+	c.sendMu.Unlock()
 	if c.client != nil {
 		c.client.Disconnect()
 	}
 }
 
+// Send delivers an outbound message synchronously. It serializes the send
+// under sendMu, so Disconnect blocks until any in-flight send completes.
 func (c *Client) Send(ctx context.Context, message domain.OutboundMessage) (domain.SendResult, error) {
-	command := sendCommand{ctx: ctx, message: message, response: make(chan sendResponse, 1)}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 
-	c.stateMu.RLock()
 	if c.closed {
-		c.stateMu.RUnlock()
 		return domain.SendResult{}, errors.New("whatsapp sender is closed")
 	}
-	c.stateMu.RUnlock()
+	if message.Text == nil && message.Type != "contacts" {
+		return domain.SendResult{}, errors.New("text message is missing")
+	}
 	select {
-	case c.sendQueue <- command:
 	case <-ctx.Done():
 		return domain.SendResult{}, ctx.Err()
-	case <-c.workerCtx.Done():
-		return domain.SendResult{}, errors.New("whatsapp sender is closed")
-	}
-
-	select {
-	case response := <-command.response:
-		return response.result, response.err
-	case <-ctx.Done():
-		return domain.SendResult{}, ctx.Err()
-	case <-c.workerCtx.Done():
-		return domain.SendResult{}, errors.New("whatsapp sender is closed")
-	}
-}
-
-func (c *Client) sendLoop() {
-	defer close(c.workerDone)
-	for {
-		select {
-		case command := <-c.sendQueue:
-			c.handleSend(command)
-		case <-c.workerCtx.Done():
-			c.failQueuedSends()
-			return
-		}
-	}
-}
-
-func (c *Client) handleSend(command sendCommand) {
-	if command.message.Text == nil && command.message.Type != "contacts" {
-		command.response <- sendResponse{err: errors.New("text message is missing")}
-		return
-	}
-	select {
-	case <-command.ctx.Done():
-		command.response <- sendResponse{err: command.ctx.Err()}
-		return
 	default:
 	}
 
-	jid, err := types.ParseJID(command.message.To + "@s.whatsapp.net")
+	jid, err := types.ParseJID(message.To + "@s.whatsapp.net")
 	if err != nil {
-		command.response <- sendResponse{err: fmt.Errorf("parse recipient: %w", err)}
-		return
+		return domain.SendResult{}, fmt.Errorf("parse recipient: %w", err)
 	}
 
 	var msg *waE2E.Message
-	if command.message.Type == "contacts" {
-		msg = buildContactMessage(command.message.Contacts)
+	if message.Type == "contacts" {
+		msg = buildContactMessage(message.Contacts)
 		if msg == nil {
-			command.response <- sendResponse{err: errors.New("contacts message is missing contacts")}
-			return
+			return domain.SendResult{}, errors.New("contacts message is missing contacts")
 		}
 	} else {
-		text := command.message.Text.Body
+		text := message.Text.Body
 		msg = &waE2E.Message{Conversation: &text}
 	}
 
-	sendCtx, cancel := context.WithCancel(command.ctx)
-	stop := context.AfterFunc(c.workerCtx, cancel)
-	response, err := c.send(sendCtx, jid, msg)
-	stop()
-	cancel()
+	response, err := c.send(ctx, jid, msg)
 	if err != nil {
-		command.response <- sendResponse{err: err}
-		return
+		return domain.SendResult{}, err
 	}
-	command.response <- sendResponse{result: domain.SendResult{
+	return domain.SendResult{
 		ID:        string(response.ID),
 		Recipient: jid.User,
 		Timestamp: response.Timestamp,
-	}}
+	}, nil
 }
 
 // buildContactMessage creates a WhatsApp contact message from domain contacts.
@@ -328,17 +261,6 @@ func buildSingleVCard(c domain.ContactInput) (string, error) {
 		evt.URLs = append(evt.URLs, domain.URLEvent{URL: u.URL, Type: u.Type})
 	}
 	return vcard.BuildVCard(evt)
-}
-
-func (c *Client) failQueuedSends() {
-	for {
-		select {
-		case command := <-c.sendQueue:
-			command.response <- sendResponse{err: errors.New("whatsapp sender is closed")}
-		default:
-			return
-		}
-	}
 }
 
 // AddEventHandler registers a raw whatsmeow event handler.
