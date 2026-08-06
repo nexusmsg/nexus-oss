@@ -18,21 +18,22 @@ const (
 
 // Job mirrors the outbound job queue row in the jobs table.
 type Job struct {
-	ID             int64
-	Serial         string
-	Type           string
-	PhoneNumberID  string
-	Payload        json.RawMessage
-	Status         string
-	Attempts       int
-	MaxAttempts    int
-	AvailableAt    time.Time
-	ClaimedAt      time.Time
-	CompletedAt    time.Time
-	ClaimedBy      string
-	LastError      string
-	Result         json.RawMessage
-	IDempotencyKey string
+	ID              int64
+	Serial          string
+	SourceJobSerial string // whatsmeow_jobs.source_job_serial (uuid; "" when none)
+	Type            string
+	PhoneNumberID   string
+	Payload         json.RawMessage
+	Status          string
+	Attempts        int
+	MaxAttempts     int
+	AvailableAt     time.Time
+	ClaimedAt       time.Time
+	CompletedAt     time.Time
+	ClaimedBy       string
+	LastError       string
+	Result          json.RawMessage
+	IDempotencyKey  string
 }
 
 // JobResult is the persisted result of a completed job. wa_message_id is the

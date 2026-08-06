@@ -396,3 +396,96 @@ no `e2e` turbo task, no `@playwright/test` dep). FE behavior verification stays
 with vitest unit tests (`src/api/client.test.ts` + `src/app/auth-context.test.tsx`,
 8 tests: Bearer resolution, Basic gate flow, 401 → retry).
 
+## Worker Split — M13 + M14 (2026-08-06)
+
+The worker is now split into two binaries communicating through the
+`whatsmeow_jobs` table. `services/api/` is untouched; it still polls `jobs`
+for terminal status + `result.wa_message_id`.
+
+### M13 — `whatsmeow_jobs` migration + parameterized `Store`
+
+- `shared/db/migrations/000007_create_whatsmeow_jobs.up/.down.sql`: clone of
+  000001 (`jobs`) with renamed table/trigger/indexes, plus `source_job_serial
+  uuid` (after `serial`, no FK) and `whatsmeow_jobs_source_idx`. Same status
+  vocabulary `pending/claimed/succeeded/failed`. `set_updated_at()` is not
+  re-created (owned by 000001). Down drops trigger then table (not the fn).
+- `internal/adapters/queue/store.go`: `Store` gained a `table` field (trusted
+  constructor constant, never env) + `ownsPool`; `NewStore(ctx, dsn, table,
+  logger)` creates the pool, `NewStoreWithPool(pool, table, logger)` wraps a
+  shared pool; `Close()` only closes an owned pool. All SQL interpolates
+  `s.table`.
+- Updated callers: `store_integration_test.go` (`"jobs"`), `cmd/main.go`
+  (`"jobs"`).
+- Docker migrate step was skipped (daemon down at the time).
+
+### M14 — dispatcher + executor + two entrypoints
+
+- `internal/core/domain/job.go`: added `SourceJobSerial string` (uuid,
+  `""` = none). **Deviation:** spec said `int64`, but `source_job_serial` is a
+  uuid column and `Complete(serial string)` + `job.Serial` are strings — int64
+  cannot hold a uuid and would not compile.
+- `internal/core/ports/errors.go`: `ports.ErrDispatched` sentinel.
+- `internal/core/ports/job_store.go`: `Enqueue(ctx, job) (string, error)` —
+  **deviation:** spec said `(int64, error)`, but `RETURNING serial` returns a
+  uuid, so the return type is `string`.
+- `internal/adapters/queue/store.go`: `Enqueue` inserts
+  `(type, phone_number_id, payload, idempotency_key, status, attempts,
+  max_attempts, source_job_serial)` — **deviation:** spec's proposed column
+  list omitted `type`/`phone_number_id` (both NOT NULL; `phone_number_id` has
+  no default, so that INSERT would fail). Claim SELECT/scan now conditionally
+  include `source_job_serial` for the `whatsmeow_jobs` table.
+- `internal/adapters/queue/consumer.go`: `errors.Is(err, ports.ErrDispatched)`
+  → log + `return nil` (row stays `claimed`). `consumer_test.go`: fake
+  `Enqueue` + `TestProcessJobLeavesDispatchedJobClaimed`.
+- `internal/service/dispatcher.go` (new): validates send payloads
+  (`validateOutboundMessage`), sets `SourceJobSerial = Serial`, Enqueues,
+  returns `ports.ErrDispatched`. **Deviation:** spec said `*slog.Logger`; the
+  rest of the worker uses stdlib `*log.Logger`, so it matches the codebase.
+- `internal/service/whatsapp_executor.go` (new): ported JobExecutor logic
+  (ensureDevice/handlePairing/handleLogout/handleSendMessage) + `jobsStore`
+  write-back. On success → `jobsStore.Complete(sourceJobSerial, result)`
+  (write-back errors logged, NOT propagated — avoids retrying a send that
+  already succeeded into a duplicate message). On terminal failure
+  (`isTerminalAttempt`: `MaxAttempts > 0 && Attempts >= MaxAttempts`, mirroring
+  the consumer's `Attempts >= effectiveMax` where `effectiveMax = MaxAttempts`
+  when the row sets it — whatsmeow_jobs always does, default 3) →
+  `jobsStore.Fail(sourceJobSerial, err)`; retryable attempts leave `jobs`
+  `claimed`.
+- `cmd/worker/main.go` (new): stateless. One pool → `NewStore("jobs")` +
+  `NewStoreWithPool("whatsmeow_jobs")`, `Consumer(jobsStore,
+  Dispatcher(dispatchStore))`. No WhatsMeow imports.
+- `cmd/whatsapp_worker/main.go` (new): current `cmd/main.go` wiring
+  (boot sync, heartbeat, shutdown) but the consumer polls `whatsmeow_jobs` and
+  a second `NewStoreWithPool("jobs")` backs the executor's write-back.
+- **Kept on purpose:** `cmd/main.go` and `internal/service/executor.go` — the
+  spec's step 6/8 conflict (delete executor.go vs. keep cmd/main.go compiling
+  and working) resolves to keeping both until the split e2e passes.
+- Infra: `package.json` build → three binaries (worker/whatsapp_worker/migrate),
+  `dev` → whatsapp_worker, new `dev:worker`; `Dockerfile` builds all three into
+  `/app` (ENTRYPOINT stays `/app/worker`); `docker-compose.yml` splits `worker`
+  into `worker` (dispatcher) + `whatsapp_worker` (entrypoint override →
+  `/app/whatsapp_worker`) sharing one image + env anchor.
+- Docs: `services/worker/AGENTS.md` (two-binary split, sentinel + write-back
+  contracts), `docs/services/worker/{README,architecture,queue,configuration}.md`,
+  `docs/services/README.md`, `docs/README.md` updated to the two-binary flow.
+
+### Verification (M14)
+
+```text
+gofmt -l .                                clean (no output)
+go test ./...                             102 passed (14 packages)
+go vet ./...                              clean
+CGO_ENABLED=0 go build ./cmd/...          OK (cmd, cmd/worker, cmd/whatsapp_worker, cmd/migrate)
+docker compose build migrate              NOT run — Docker daemon down
+```
+
+### Pending
+
+- e2e against the compose stack (requires Docker): confirm
+  API → jobs → worker → whatsmeow_jobs → whatsapp_worker → WhatsMeow → jobs
+  write-back, then delete `cmd/main.go` + `internal/service/executor.go` in the
+  same commit and update this file.
+- Commit the M13 + M14 work (per repo milestone rules, reference M13/M14 in the
+  commit message).
+
+

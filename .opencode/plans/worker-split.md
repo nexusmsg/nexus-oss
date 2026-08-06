@@ -80,7 +80,13 @@ be documented in `docs/services/worker/`.
 
 ## Milestones
 
-### M13 — `whatsmeow_jobs` migration + second `Store` instance
+### M13 — `whatsmeow_jobs` migration + second `Store` instance **(Completed — commit `52220d1`)**
+
+Status: migration `000007_create_whatsmeow_jobs.{up,down}.sql` landed; `Store`
+parameterized via `table` constructor constant with `NewStoreWithPool` for
+shared-pool reuse. Verified: gofmt clean, `go test ./...` 101 passed / 12
+packages, `go vet ./...` clean, `go build ./...` OK. Docker migrate up/down
+deferred (daemon down at the time).
 
 **Migration (`shared/db/migrations/000007_create_whatsmeow_jobs`):**
 
@@ -160,7 +166,21 @@ the concrete `Store` — the interface is the seam. So:
   up/down.
 - Existing queue store integration test still passes with `table: "jobs"`.
 
-### M14 — Split executor + two `cmd/` entrypoints + build/deploy + docs
+### M14 — Split executor + two `cmd/` entrypoints + build/deploy + docs **(Completed)**
+
+Status: `Dispatcher`, `WhatsAppExecutor`, `cmd/worker`, `cmd/whatsapp_worker`,
+`ports.ErrDispatched`, `Store.Enqueue`, Consumer sentinel branch, package.json /
+Dockerfile / compose split, and docs all landed. Legacy `cmd/main.go` +
+`internal/service/executor.go` **kept** — the plan gates their deletion on the
+docker e2e, which is deferred (daemon down; user chose "commit now, defer
+e2e").
+
+Verified (2026-08-06): gofmt clean; `go test ./...` 102 passed / 14 packages
+(incl. new consumer dispatched-branch test); `go vet ./...` clean;
+`go build ./...` OK; `CGO_ENABLED=0 go build ./cmd/...` OK (cmd, cmd/worker,
+cmd/whatsapp_worker, cmd/migrate); `go mod tidy` no-op; `docker compose config
+--quiet` OK; turbo `npm run build` 3/3 tasks OK. Not run: compose up e2e
+(daemon down) — see "Out of Scope"/next steps below.
 
 This milestone combines the executor split and the wiring into one
 shippable unit. M14 alone (executor split with nothing wired) would leave

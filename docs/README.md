@@ -10,7 +10,7 @@ docs/
   architecture/        <- cross-cutting runtime flows & plans
   services/            <- per-service documentation
     api/               <- Hono API (Node.js)
-    worker/            <- WhatsMeow gateway (Go)
+    worker/            <- WhatsMeow gateway (Go; two binaries sharing whatsmeow_jobs)
   shared/              <- shared assets (db migrations)
   apps/                <- UI & frontend (Nexus dashboard)
 ```

@@ -8,19 +8,43 @@ Dependency direction is one-way: `domain ← ports ← service ← adapters`,
 with `cmd` as the composition root.
 
 ```text
-cmd/main.go                    compose, boot sync, shutdown
+cmd/worker/            stateless dispatcher composition root
+cmd/whatsapp_worker/   stateful executor composition root
+cmd/migrate/           golang-migrate runner
    │
 internal/core/domain/          internal models (no external imports)
 internal/core/ports/           contracts (interfaces + sentinel errors)
-internal/service/              use cases: executor, message, outbound
+internal/service/              use cases: dispatcher, whatsapp executor, message, outbound
 internal/adapters/             whatsmeow, queue, webhook, apiconfig
 ```
 
 Compile-time assertions (`var _ ports.X = (*Y)(nil)`) enforce the contracts.
 
-## Runtime flows
+## Two-binary runtime flow
 
-### Boot / provisioning
+The worker area is split into two binaries that communicate only through the
+`whatsmeow_jobs` table. The API is untouched and still polls `jobs` for
+terminal status + `result.wa_message_id`.
+
+```text
+API POST /:phone_number_id/messages -> jobs row (pending)
+  -> cmd/worker: adapters/queue consumer claims the jobs row
+       (FOR UPDATE SKIP LOCKED, marks it 'claimed')
+  -> service/dispatcher.go: validate payload -> INSERT into whatsmeow_jobs
+       with source_job_serial = jobs.serial -> return ports.ErrDispatched
+  -> consumer leaves the jobs row 'claimed' (no Complete/Retry/Fail)
+  -> cmd/whatsapp_worker: adapters/queue consumer claims the whatsmeow_jobs row
+  -> service/whatsapp_executor.go: ensureDevice -> validate -> DeviceManager.Sender
+       -> whatsmeow.SendMessage -> wamid
+  -> executor writes back to jobs via source_job_serial:
+       success  -> jobsStore.Complete(serial, {wa_message_id: wamid})
+       terminal -> jobsStore.Fail(serial, err)   (attempts >= max_attempts)
+       retry    -> jobs row stays 'claimed'
+  -> consumer completes/fails/retries the whatsmeow_jobs row
+  -> API polls jobs to terminal status and returns the official WABA 200 envelope
+```
+
+### Boot / provisioning (cmd/whatsapp_worker only)
 1. `config.Load` → build `SessionStore`, `DeviceManager`, consumer, heartbeat.
 2. Boot sync: `SessionStore.ListSessions()` → `DeviceManager.EnsureDevice` per
    session → `ConnectStored()` (connects only devices with a stored WhatsMeow
@@ -29,7 +53,7 @@ Compile-time assertions (`var _ ports.X = (*Y)(nil)`) enforce the contracts.
    shutdown (cancel pairCtx → disconnect → join actors) → container close →
    store close.
 
-### Inbound (WhatsApp → customer webhook)
+### Inbound (WhatsApp → customer webhook) — cmd/whatsapp_worker only
 ```text
 WhatsMeow event
   -> adapters/whatsmeow/handler.go (anti-corruption, unwrap)
@@ -41,19 +65,7 @@ WhatsMeow event
   -> customer webhook endpoint
 ```
 
-### Outbound (API job → WhatsApp)
-```text
-API POST /:phone_number_id/messages -> jobs row (pending)
-  -> adapters/queue consumer (Claim, FOR UPDATE SKIP LOCKED)
-  -> service/executor.go: lazy ensureDevice (GetByPhoneNumberID ->
-     DeviceManager.EnsureDevice; missing session fails job) -> validate
-  -> DeviceManager.Sender(phone_number_id) -> per-device send queue
-  -> whatsmeow.SendMessage
-  -> Complete with result: {"wa_message_id": "<real wamid>"}
-  -> API polls result and returns the official WABA 200 envelope
-```
-
-### Pairing / logout (job-driven, lazy)
+### Pairing / logout (job-driven, lazy) — cmd/whatsapp_worker
 - Executor resolves the session first (`GetByPhoneNumberID`; null → job fails
   "session not found"), then `EnsureDevice`.
 - `Pair` returns `ports.ErrAlreadyPaired` when the device already has a stored
@@ -69,6 +81,10 @@ API POST /:phone_number_id/messages -> jobs row (pending)
 | `ActiveDeviceProvider` | `ActiveDevices() []string` (heartbeat dep, avoids full interface) |
 | `OutboundSenderProvider` | `Sender(phoneNumberID)` fast-path |
 | `SessionStore` | ListSessions, GetByPhoneNumberID, UpdateHeartbeats |
-| `JobStore` / `JobHandler` | queue store / executor contract |
+| `JobStore` / `JobHandler` | queue store (Claim/Enqueue/Complete/RetryLater/Fail) / handler contract |
 | `MessageSender` / `MessageService` | per-device send / inbound boundary |
 | `WebhookConfigProvider` / `WebhookForwarder` | config fetch / HMAC POST |
+
+Sentinel errors: `ports.ErrDispatched` (handler forwarded the job to
+`whatsmeow_jobs`; consumer leaves the row `claimed`) and `ports.ErrAlreadyPaired`
+(idempotent pairing success).

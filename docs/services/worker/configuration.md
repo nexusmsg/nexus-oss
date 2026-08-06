@@ -20,4 +20,13 @@ All values are read from environment variables via
 
 - `go run ./cmd/migrate -dsn <SUPABASE_DSN>` — apply migrations
   (`shared/db/migrations`, golang-migrate format).
-- `go run ./cmd` — start the worker (uses `internal/config.Load`).
+- `go run ./cmd/worker` — start the stateless dispatcher (jobs →
+  `whatsmeow_jobs`; no WhatsMeow, scalable).
+- `go run ./cmd/whatsapp_worker` — start the stateful executor
+  (`whatsmeow_jobs` → jobs write-back; owns WhatsMeow, single instance).
+- `go run ./cmd` — legacy single-binary entrypoint (kept until the split e2e
+  passes, then deleted).
+
+Both worker binaries read the same env block; `cmd/worker` ignores the
+WhatsMeow/session-related vars (`WHATSMEOW_STORE_DSN`, `BUSINESS_ACCOUNT_ID`,
+`HEARTBEAT_INTERVAL`, `API_URL`, `INTERNAL_TOKEN`, `WEBHOOK_CONFIG_TTL`).

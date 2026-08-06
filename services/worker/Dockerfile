@@ -13,9 +13,12 @@ RUN go mod download
 COPY services/worker/ ./
 COPY shared/db/migrations/ ./shared/db/migrations/
 
-# Build both static Linux binaries with CGO disabled.
+# Build the static Linux binaries with CGO disabled. The compose migrate
+# service runs /app/migrate; the worker services select their binary via
+# command/entrypoint override.
 RUN mkdir -p /app \
-    && CGO_ENABLED=0 GOOS=linux go build -o /app/worker ./cmd \
+    && CGO_ENABLED=0 GOOS=linux go build -o /app/worker ./cmd/worker \
+    && CGO_ENABLED=0 GOOS=linux go build -o /app/whatsapp_worker ./cmd/whatsapp_worker \
     && CGO_ENABLED=0 GOOS=linux go build -o /app/migrate ./cmd/migrate
 
 # ---- Runtime stage: minimal Alpine with CA certificates ----
@@ -27,9 +30,12 @@ WORKDIR /app
 
 # Copy the compiled binaries from the build stage.
 COPY --from=build /app/worker /app/worker
+COPY --from=build /app/whatsapp_worker /app/whatsapp_worker
 COPY --from=build /app/migrate /app/migrate
 
 # Copy migrations so MIGRATIONS_DIR=/app/migrations works out of the box.
 COPY --from=build /src/shared/db/migrations /app/migrations
 
+# Default to the stateless dispatcher; compose overrides per service
+# (whatsapp_worker runs /app/whatsapp_worker, migrate runs /app/migrate).
 ENTRYPOINT ["/app/worker"]

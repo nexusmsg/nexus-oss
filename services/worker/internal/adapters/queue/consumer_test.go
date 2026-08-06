@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
 type completeCall struct {
@@ -28,6 +29,7 @@ type failCall struct {
 
 type fakeJobStore struct {
 	claimed  []domain.Job
+	enqueued []domain.Job
 	complete []completeCall
 	retried  []retryCall
 	failed   []failCall
@@ -35,6 +37,11 @@ type fakeJobStore struct {
 
 func (s *fakeJobStore) Claim(_ context.Context, _ int) ([]domain.Job, error) {
 	return s.claimed, nil
+}
+
+func (s *fakeJobStore) Enqueue(_ context.Context, job domain.Job) (string, error) {
+	s.enqueued = append(s.enqueued, job)
+	return "serial-enqueued", nil
 }
 
 func (s *fakeJobStore) Complete(_ context.Context, serial string, result domain.JobResult) error {
@@ -89,6 +96,25 @@ func TestProcessJobCompletesOnSuccess(t *testing.T) {
 	}
 	if len(store.retried) != 0 || len(store.failed) != 0 {
 		t.Errorf("retried = %+v, failed = %+v", store.retried, store.failed)
+	}
+}
+
+func TestProcessJobLeavesDispatchedJobClaimed(t *testing.T) {
+	store := &fakeJobStore{}
+	handler := &fakeJobHandler{err: ports.ErrDispatched}
+	consumer := newTestConsumer(store, handler)
+
+	err := consumer.processJob(context.Background(), domain.Job{
+		Serial: "serial-1",
+		Type:   domain.JobTypeSendMessage,
+	})
+	if err != nil {
+		t.Fatalf("processJob() error = %v", err)
+	}
+	// The dispatched job is neither completed, retried, nor failed: the jobs
+	// row stays 'claimed' until the whatsapp worker writes back.
+	if len(store.complete) != 0 || len(store.retried) != 0 || len(store.failed) != 0 {
+		t.Errorf("complete = %+v, retried = %+v, failed = %+v; want none for a dispatched job", store.complete, store.retried, store.failed)
 	}
 }
 

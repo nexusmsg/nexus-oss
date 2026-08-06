@@ -2,8 +2,9 @@
   "name": "@waba/worker",
   "private": true,
   "scripts": {
-    "build": "go build -o bin/worker ./cmd",
-    "dev": "go run ./cmd",
+    "build": "go build -o bin/worker ./cmd/worker && go build -o bin/whatsapp_worker ./cmd/whatsapp_worker && go build -o bin/migrate ./cmd/migrate",
+    "dev": "go run ./cmd/whatsapp_worker",
+    "dev:worker": "go run ./cmd/worker",
     "test": "go test ./...",
     "lint": "gofmt -l .",
     "migrate": "go run ./cmd/migrate"

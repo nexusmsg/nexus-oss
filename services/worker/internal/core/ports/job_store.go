@@ -11,6 +11,9 @@ import (
 type JobStore interface {
 	// Claim atomically claims up to limit pending jobs that are due.
 	Claim(ctx context.Context, limit int) ([]domain.Job, error)
+	// Enqueue inserts a job into the queue table and returns its serial. Used
+	// to forward claimed jobs from the jobs table into whatsmeow_jobs.
+	Enqueue(ctx context.Context, job domain.Job) (string, error)
 	// Complete marks a job as succeeded with its result.
 	Complete(ctx context.Context, serial string, result domain.JobResult) error
 	// RetryLater returns a failed job to the pending queue.

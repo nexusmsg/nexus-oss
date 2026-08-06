@@ -1,5 +1,18 @@
 name: waba-api-unofficial
 
+# Shared environment for the two worker binaries (same image, different entry).
+x-worker-env: &worker-env
+  SUPABASE_DSN: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
+  WHATSMEOW_STORE_DSN: ""
+  MIGRATIONS_DIR: /app/migrations
+  POLL_INTERVAL: "1s"
+  API_URL: http://api:3000
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+  MAX_ATTEMPTS: "3"
+  WEBHOOK_CONFIG_TTL: "30s"
+  HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-10s}
+  BUSINESS_ACCOUNT_ID: ${BUSINESS_ACCOUNT_ID:-}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -70,20 +83,24 @@ services:
         condition: service_completed_successfully
 
   worker:
-    build:
+    build: &worker-build
       context: .
       dockerfile: services/worker/Dockerfile
-    environment:
-      SUPABASE_DSN: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
-      WHATSMEOW_STORE_DSN: ""
-      MIGRATIONS_DIR: /app/migrations
-      POLL_INTERVAL: "1s"
-      API_URL: http://api:3000
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      MAX_ATTEMPTS: "3"
-      WEBHOOK_CONFIG_TTL: "30s"
-      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-10s}
-      BUSINESS_ACCOUNT_ID: ${BUSINESS_ACCOUNT_ID:-}
+    # Stateless dispatcher: polls jobs -> forwards to whatsmeow_jobs.
+    environment: *worker-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  whatsapp_worker:
+    build: *worker-build
+    # The image ENTRYPOINT is /app/worker (the stateless dispatcher); reset it
+    # so this service runs the stateful executor instead.
+    entrypoint: []
+    command: ["/app/whatsapp_worker"]
+    environment: *worker-env
     depends_on:
       postgres:
         condition: service_healthy

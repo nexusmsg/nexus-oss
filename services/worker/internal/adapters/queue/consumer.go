@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -101,6 +102,14 @@ func (c *Consumer) processJob(ctx context.Context, job domain.Job) error {
 			return fmt.Errorf("complete job %s: %w", job.Serial, completeErr)
 		}
 		c.logger.Printf("queue consumer: job %s: completed", job.Serial)
+		return nil
+	}
+
+	// A dispatched job was forwarded to whatsmeow_jobs; the whatsapp worker
+	// writes the terminal status back to the jobs row later, so leave it
+	// 'claimed' rather than retrying or failing it here.
+	if errors.Is(err, ports.ErrDispatched) {
+		c.logger.Printf("queue consumer: job %s: dispatched to whatsmeow_jobs", job.Serial)
 		return nil
 	}
 

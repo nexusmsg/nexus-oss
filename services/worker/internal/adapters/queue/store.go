@@ -74,7 +74,9 @@ func (s *Store) Pool() *pgxpool.Pool {
 
 // claimSQL is the claim query template. The table name is a trusted
 // constructor constant (never user input), so %s interpolation is safe here —
-// Postgres cannot bind table names as query parameters.
+// Postgres cannot bind table names as query parameters. The trailing %s is the
+// optional source_job_serial SELECT column ("" for the jobs table, which has
+// no such column).
 const claimSQL = `
 update %s
 set status = 'claimed',
@@ -93,7 +95,16 @@ where serial in (
 )
 returning id, serial, type, phone_number_id, payload, status, attempts,
          max_attempts, available_at, claimed_by, claimed_at, completed_at,
-         last_error, result, idempotency_key`
+         last_error, result, idempotency_key%s`
+
+// sourceSerialSelect returns the SELECT fragment for the whatsmeow_jobs
+// correlation column; the jobs table has no such column.
+func (s *Store) sourceSerialSelect() string {
+	if s.table == "whatsmeow_jobs" {
+		return ",\n         source_job_serial"
+	}
+	return ""
+}
 
 func (s *Store) Claim(ctx context.Context, limit int) ([]domain.Job, error) {
 	if limit <= 0 {
@@ -103,7 +114,7 @@ func (s *Store) Claim(ctx context.Context, limit int) ([]domain.Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: resolve hostname: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, fmt.Sprintf(claimSQL, s.table, s.table), hostname, limit)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(claimSQL, s.table, s.table, s.sourceSerialSelect()), hostname, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: claim jobs: %w", err)
 	}
@@ -112,12 +123,16 @@ func (s *Store) Claim(ctx context.Context, limit int) ([]domain.Job, error) {
 	var jobs []domain.Job
 	for rows.Next() {
 		var row jobRow
-		if err := rows.Scan(
+		scanTargets := []any{
 			&row.ID, &row.Serial, &row.Type, &row.PhoneNumberID, &row.Payload,
 			&row.Status, &row.Attempts, &row.MaxAttempts, &row.AvailableAt,
 			&row.ClaimedBy, &row.ClaimedAt, &row.CompletedAt, &row.LastError,
 			&row.Result, &row.IDempotencyKey,
-		); err != nil {
+		}
+		if s.table == "whatsmeow_jobs" {
+			scanTargets = append(scanTargets, &row.SourceJobSerial)
+		}
+		if err := rows.Scan(scanTargets...); err != nil {
 			return nil, fmt.Errorf("store: scan claimed job: %w", err)
 		}
 		jobs = append(jobs, row.toJob())
@@ -126,6 +141,39 @@ func (s *Store) Claim(ctx context.Context, limit int) ([]domain.Job, error) {
 		return nil, fmt.Errorf("store: iterate claimed jobs: %w", err)
 	}
 	return jobs, nil
+}
+
+// Enqueue inserts a job into the queue table and returns its serial. Used by
+// cmd/worker to forward claimed jobs rows into whatsmeow_jobs. The table name
+// is a trusted constructor constant (see claimSQL).
+func (s *Store) Enqueue(ctx context.Context, job domain.Job) (string, error) {
+	payload := string(job.Payload)
+	if payload == "" {
+		payload = "{}"
+	}
+	var idempotencyKey any
+	if job.IDempotencyKey != "" {
+		idempotencyKey = job.IDempotencyKey
+	}
+	maxAttempts := job.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMaxAttempts
+	}
+	var sourceJobSerial any
+	if job.SourceJobSerial != "" {
+		sourceJobSerial = job.SourceJobSerial
+	}
+	var serial string
+	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
+insert into %s (type, phone_number_id, payload, idempotency_key, status, attempts, max_attempts, source_job_serial)
+values ($1, $2, $3::jsonb, $4, 'pending', 0, $5, $6)
+returning serial`, s.table),
+		job.Type, job.PhoneNumberID, payload, idempotencyKey, maxAttempts, sourceJobSerial,
+	).Scan(&serial)
+	if err != nil {
+		return "", fmt.Errorf("store: enqueue job: %w", err)
+	}
+	return serial, nil
 }
 
 func (s *Store) Complete(ctx context.Context, serial string, result domain.JobResult) error {
@@ -197,40 +245,42 @@ func errMessage(err error) string {
 // jobRow is the nullable scan target for a claimed job row; the domain Job
 // uses zero values for columns that are null for claimed jobs.
 type jobRow struct {
-	ID             int64
-	Serial         string
-	Type           string
-	PhoneNumberID  string
-	Payload        []byte
-	Status         string
-	Attempts       int
-	MaxAttempts    int
-	AvailableAt    time.Time
-	ClaimedBy      *string
-	ClaimedAt      *time.Time
-	CompletedAt    *time.Time
-	LastError      *string
-	Result         *[]byte
-	IDempotencyKey *string
+	ID              int64
+	Serial          string
+	SourceJobSerial *string
+	Type            string
+	PhoneNumberID   string
+	Payload         []byte
+	Status          string
+	Attempts        int
+	MaxAttempts     int
+	AvailableAt     time.Time
+	ClaimedBy       *string
+	ClaimedAt       *time.Time
+	CompletedAt     *time.Time
+	LastError       *string
+	Result          *[]byte
+	IDempotencyKey  *string
 }
 
 func (r jobRow) toJob() domain.Job {
 	return domain.Job{
-		ID:             r.ID,
-		Serial:         r.Serial,
-		Type:           r.Type,
-		PhoneNumberID:  r.PhoneNumberID,
-		Payload:        r.Payload,
-		Status:         r.Status,
-		Attempts:       r.Attempts,
-		MaxAttempts:    r.MaxAttempts,
-		AvailableAt:    r.AvailableAt,
-		ClaimedAt:      derefTime(r.ClaimedAt),
-		CompletedAt:    derefTime(r.CompletedAt),
-		ClaimedBy:      derefString(r.ClaimedBy),
-		LastError:      derefString(r.LastError),
-		Result:         derefBytes(r.Result),
-		IDempotencyKey: derefString(r.IDempotencyKey),
+		ID:              r.ID,
+		Serial:          r.Serial,
+		SourceJobSerial: derefString(r.SourceJobSerial),
+		Type:            r.Type,
+		PhoneNumberID:   r.PhoneNumberID,
+		Payload:         r.Payload,
+		Status:          r.Status,
+		Attempts:        r.Attempts,
+		MaxAttempts:     r.MaxAttempts,
+		AvailableAt:     r.AvailableAt,
+		ClaimedAt:       derefTime(r.ClaimedAt),
+		CompletedAt:     derefTime(r.CompletedAt),
+		ClaimedBy:       derefString(r.ClaimedBy),
+		LastError:       derefString(r.LastError),
+		Result:          derefBytes(r.Result),
+		IDempotencyKey:  derefString(r.IDempotencyKey),
 	}
 }
 

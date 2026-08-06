@@ -6,21 +6,30 @@ Supabase/Postgres-backed job queue + session state sync. Source:
 
 ## Job store (`store.go`)
 
+- One `Store` per table, selected at construction (`"jobs"` or
+  `"whatsmeow_jobs"`); all SQL interpolates the trusted table name. Two
+  instances can share one pgx pool via `NewStoreWithPool`.
 - Claim model: `FOR UPDATE SKIP LOCKED` on the next pending job.
 - Attempt counting: failed claims increment `attempts`; jobs exceeding
-  `MAX_ATTEMPTS` (default 3) are marked `failed` permanently.
-- Job states: `pending` → `processing` → `succeeded` / `failed`.
-- Fields: `id` (bigint), `type` (`send_message`, `pairing`, `logout`),
-  `payload` (JSONB), `result` (JSONB), `attempts`, `status`, `error`,
-  `run_at`, `created_at`, `started_at`, `completed_at`.
-- The API polls this table for terminal state and reads `result`.
+  `max_attempts` (default 3) are marked `failed` permanently.
+- Job states: `pending` → `claimed` → `succeeded` / `failed`.
+- `Enqueue`: `INSERT ... (type, phone_number_id, payload, idempotency_key,
+  status, attempts, max_attempts, source_job_serial) VALUES (... 'pending', 0,
+  ...) RETURNING serial` — used by `cmd/worker` to forward `jobs` rows into
+  `whatsmeow_jobs`.
+- `whatsmeow_jobs` rows carry `source_job_serial` (uuid → `jobs.serial`); the
+  claim SELECT includes it so the executor can write the result back.
+- The API polls the `jobs` table for terminal state and reads `result`.
 
 ## Consumer (`consumer.go`)
 
 - Polls every `POLL_INTERVAL` (default 1s); graceful stop via signal ctx.
-- On claim: resolves `JobHandler` for the job type (`executor` for
-  `send_message`/`pairing`/`logout`), executes, then `Complete`/`Fail` with the
-  handler's result/error.
+- On claim: resolves `JobHandler` for the job type, executes, then
+  `Complete`/`Fail`/`RetryLater` with the handler's result/error.
+- A handler error that is `ports.ErrDispatched` (send_message forwarded to
+  `whatsmeow_jobs` by the dispatcher) is special-cased: the jobs row is left
+  `claimed` — no Complete/Retry/Fail — because the whatsapp worker writes the
+  terminal status back later.
 
 ## Session store (`session_store.go`)
 
@@ -33,7 +42,7 @@ Supabase/Postgres-backed job queue + session state sync. Source:
 
 - Every `HEARTBEAT_INTERVAL` (default 10s): collect active devices from
   `DeviceManager.ActiveDevices()`, batch-update `last_seen_at`.
-- Runs in a goroutine; stops with the signal ctx.
+- Runs in the `cmd/whatsapp_worker` process; stops with the signal ctx.
 
 ## Webhook config provider (`adapters/apiconfig`)
 

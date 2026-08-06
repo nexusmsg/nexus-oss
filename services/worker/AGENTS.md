@@ -21,7 +21,11 @@ internal/adapters/           Third-party and external-system implementations
   whatsmeow/                 WhatsApp client adapter and event translation
   webhook/                   HTTP webhook/API client adapter
 internal/config/             Environment-based configuration
-cmd/main.go                  Application composition root
+cmd/worker/                  Stateless dispatcher composition root (jobs -> whatsmeow_jobs)
+cmd/whatsapp_worker/         Stateful executor composition root (whatsmeow_jobs -> jobs write-back)
+cmd/migrate/                 golang-migrate runner
+cmd/main.go                  Legacy single-binary entrypoint (kept until the split
+                             e2e passes, then deleted)
 ```
 
 Keep dependency direction one-way:
@@ -38,6 +42,32 @@ Keep dependency direction one-way:
 - `cmd` is responsible for composition: loading configuration, constructing
   concrete adapters and services, registering handlers, and managing resource
   ownership.
+
+## Two-Binary Split
+
+The worker area ships two binaries that communicate only through the
+`whatsmeow_jobs` table in Postgres. The API is untouched and still polls the
+`jobs` table for terminal status + `result.wa_message_id`.
+
+- **`cmd/worker` — stateless dispatcher.** Polls `jobs`, validates the job
+  (send_message payloads), and INSERTs it into `whatsmeow_jobs` with
+  `source_job_serial` = the original `jobs.serial`. Returns the sentinel
+  `ports.ErrDispatched` so the consumer leaves the `jobs` row `claimed`.
+  Must **not** import `internal/adapters/whatsmeow` or write to `sessions` /
+  `session_qr_codes` (read-only session lookups are allowed but must be
+  documented as read-only). Horizontally scalable.
+- **`cmd/whatsapp_worker` — stateful executor.** Owns the `DeviceManager`,
+  WhatsMeow clients, session store, and heartbeat. Polls `whatsmeow_jobs`,
+  executes each job, and writes the terminal status + `result` (wamid) back to
+  the originating `jobs` row via `source_job_serial`. Single-instance for now.
+- **Sentinel contract.** A handler that returns `ports.ErrDispatched` tells the
+  consumer to skip Complete/Retry/Fail and leave the row `claimed`.
+- **Write-back contract.** On success the executor calls
+  `jobsStore.Complete(source_job_serial, result)`; on a terminal failure
+  (attempts >= max_attempts — the same condition the consumer uses to fail a
+  row) it calls `jobsStore.Fail(source_job_serial, err)`. Retryable whatsmeow
+  failures leave `jobs` `claimed`. `jobs` must not reach `succeeded` until the
+  send actually finished.
 
 Do not put WhatsApp-library types, HTTP concerns, or webhook serialization
 logic in `internal/core/domain` or `internal/service` unless the existing
@@ -115,8 +145,9 @@ design is intentionally being changed.
 - Configuration comes from environment variables through
   `internal/config.Load`; keep defaults in that package and do not read
   environment variables throughout business logic.
-- Keep resource ownership explicit in `cmd/main.go`: construct dependencies,
-  register handlers, connect external clients, and defer cleanup there.
+- Keep resource ownership explicit in the `cmd/` entrypoints: construct
+  dependencies, register handlers, connect external clients, and defer cleanup
+  there.
 
 ## Testing and Verification
 
