@@ -49,6 +49,19 @@ design is intentionally being changed.
   name.
 - Define interfaces in `internal/core/ports`; depend on interfaces from
   services and adapters rather than concrete implementations.
+- **Ports vs. concrete adapters — the send/receive rule.** An adapter gets a
+  port only for the side that is *consumed by business logic*:
+  - **Send / dispatch side** (producers push messages or commands *into* the
+    adapter) → define a port in `internal/core/ports/`. Business logic depends
+    on the port so it can dispatch without knowing the concrete transport.
+    Example: `ports.ChannelDispatcher` is the send side of the channel router.
+  - **Receive / handler side** (handlers *receive from* the adapter) → no
+    port. It is concrete, like an HTTP handler. Example: `channel.Handler` and
+    the `channel.Router`/`channel.Channel` structs live in
+    `internal/adapters/channel/` and are not exposed through a port.
+  - Presentation/transport-facing adapters (HTTP, WebSocket, the channel
+    router itself) therefore have no port on their receive side; adapters
+    consumed by business logic (repositories, send-side dispatchers) do.
 - Use constructors named `New<Type>` that return the concrete type, for
   example `NewMessage` or `NewClient`.
 - Add a compile-time interface assertion for each implementation:
