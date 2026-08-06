@@ -43,7 +43,7 @@ func TestStoreIntegration(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	store, err := NewStore(ctx, dsn, log.Default())
+	store, err := NewStore(ctx, dsn, "jobs", log.Default())
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}

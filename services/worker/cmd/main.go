@@ -40,7 +40,7 @@ func main() {
 	if cfg.SupabaseDSN == "" {
 		log.Fatal("SUPABASE_DSN must be set to the jobs Postgres DSN")
 	}
-	store, err := queue.NewStore(ctx, cfg.SupabaseDSN, log.Default())
+	store, err := queue.NewStore(ctx, cfg.SupabaseDSN, "jobs", log.Default())
 	if err != nil {
 		log.Fatalf("initialize queue store: %v", err)
 	}

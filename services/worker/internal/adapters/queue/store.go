@@ -15,13 +15,22 @@ import (
 
 var _ ports.JobStore = (*Store)(nil)
 
-// Store implements ports.JobStore on top of the jobs table.
+// Store implements ports.JobStore on top of a single queue table. The table
+// name is fixed at construction: one Store per table (e.g. "jobs" and
+// "whatsmeow_jobs" can each have their own Store).
 type Store struct {
-	pool   *pgxpool.Pool
-	logger *log.Logger
+	pool     *pgxpool.Pool
+	table    string
+	ownsPool bool
+	logger   *log.Logger
 }
 
-func NewStore(ctx context.Context, dsn string, logger *log.Logger) (*Store, error) {
+// NewStore creates a Store backed by a new pgx pool connected to dsn. table
+// names the queue table and is a trusted constructor constant — never derived
+// from environment or user input (table names cannot be bound as query
+// parameters, so they are interpolated into SQL; fixing them here keeps that
+// interpolation injection-safe).
+func NewStore(ctx context.Context, dsn string, table string, logger *log.Logger) (*Store, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("store: dsn is empty")
 	}
@@ -36,12 +45,25 @@ func NewStore(ctx context.Context, dsn string, logger *log.Logger) (*Store, erro
 		pool.Close()
 		return nil, fmt.Errorf("store: ping database: %w", err)
 	}
-	return &Store{pool: pool, logger: logger}, nil
+	return &Store{pool: pool, table: table, ownsPool: true, logger: logger}, nil
 }
 
-// Close releases the underlying connection pool.
+// NewStoreWithPool wraps an existing pgx pool shared with other adapters; the
+// pool stays owned by the caller, so Close on this Store is a no-op. Used when
+// one pool must back several Stores (e.g. a whatsmeow_jobs queue Store and a
+// jobs write-back Store in cmd/whatsapp_worker).
+func NewStoreWithPool(pool *pgxpool.Pool, table string, logger *log.Logger) *Store {
+	if logger == nil {
+		logger = log.Default()
+	}
+	return &Store{pool: pool, table: table, ownsPool: false, logger: logger}
+}
+
+// Close releases the underlying connection pool when this Store owns it.
 func (s *Store) Close() {
-	s.pool.Close()
+	if s.ownsPool {
+		s.pool.Close()
+	}
 }
 
 // Pool returns the underlying connection pool, shared with other queue
@@ -50,15 +72,18 @@ func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+// claimSQL is the claim query template. The table name is a trusted
+// constructor constant (never user input), so %s interpolation is safe here —
+// Postgres cannot bind table names as query parameters.
 const claimSQL = `
-update jobs
+update %s
 set status = 'claimed',
     attempts = attempts + 1,
     claimed_by = $1,
     claimed_at = now()
 where serial in (
     select serial
-    from jobs
+    from %s
     where status = 'pending'
       and available_at <= now()
       and deleted_at is null
@@ -78,7 +103,7 @@ func (s *Store) Claim(ctx context.Context, limit int) ([]domain.Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: resolve hostname: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, claimSQL, hostname, limit)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(claimSQL, s.table, s.table), hostname, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: claim jobs: %w", err)
 	}
@@ -108,15 +133,15 @@ func (s *Store) Complete(ctx context.Context, serial string, result domain.JobRe
 	if err != nil {
 		return fmt.Errorf("store: marshal job result: %w", err)
 	}
-	tag, err := s.pool.Exec(ctx, `
-update jobs
+	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+update %s
 set status = 'succeeded',
     result = $2,
     completed_at = now(),
     last_error = null,
     claimed_by = null,
     claimed_at = null
-where serial = $1 and deleted_at is null`, serial, string(encoded))
+where serial = $1 and deleted_at is null`, s.table), serial, string(encoded))
 	if err != nil {
 		return fmt.Errorf("store: complete job %s: %w", serial, err)
 	}
@@ -127,14 +152,14 @@ where serial = $1 and deleted_at is null`, serial, string(encoded))
 }
 
 func (s *Store) RetryLater(ctx context.Context, serial string, nextAvailableAt time.Time, lastErr error) error {
-	tag, err := s.pool.Exec(ctx, `
-update jobs
+	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+update %s
 set status = 'pending',
     available_at = $2,
     last_error = $3,
     claimed_by = null,
     claimed_at = null
-where serial = $1 and deleted_at is null`, serial, nextAvailableAt, errMessage(lastErr))
+where serial = $1 and deleted_at is null`, s.table), serial, nextAvailableAt, errMessage(lastErr))
 	if err != nil {
 		return fmt.Errorf("store: retry job %s: %w", serial, err)
 	}
@@ -145,14 +170,14 @@ where serial = $1 and deleted_at is null`, serial, nextAvailableAt, errMessage(l
 }
 
 func (s *Store) Fail(ctx context.Context, serial string, lastErr error) error {
-	tag, err := s.pool.Exec(ctx, `
-update jobs
+	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+update %s
 set status = 'failed',
     last_error = $2,
     claimed_by = null,
     claimed_at = null,
     completed_at = now()
-where serial = $1 and deleted_at is null`, serial, errMessage(lastErr))
+where serial = $1 and deleted_at is null`, s.table), serial, errMessage(lastErr))
 	if err != nil {
 		return fmt.Errorf("store: fail job %s: %w", serial, err)
 	}
