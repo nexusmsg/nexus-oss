@@ -2,72 +2,36 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"time"
+
+	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 )
 
+// Config holds worker configuration loaded from environment variables and an
+// optional .env file. Required connection params (SUPABASE_DSN,
+// WHATSMEOW_STORE_DSN) are validated by the callers with their own messages;
+// everything here has a safe default.
 type Config struct {
-	SupabaseDSN       string
-	MigrationsDir     string
-	StoreDSN          string
-	BusinessAccountID string
-	APIURL            string
-	InternalToken     string
-	PollInterval      time.Duration
-	MaxAttempts       int
-	WebhookConfigTTL  time.Duration
-	HeartbeatInterval time.Duration
+	SupabaseDSN       string        `env:"SUPABASE_DSN"`
+	MigrationsDir     string        `env:"MIGRATIONS_DIR" envDefault:"../../shared/db/migrations"`
+	StoreDSN          string        `env:"WHATSMEOW_STORE_DSN"`
+	BusinessAccountID string        `env:"BUSINESS_ACCOUNT_ID"`
+	APIURL            string        `env:"API_URL"`
+	InternalToken     string        `env:"INTERNAL_TOKEN"`
+	PollInterval      time.Duration `env:"POLL_INTERVAL" envDefault:"1s"`
+	MaxAttempts       int           `env:"MAX_ATTEMPTS" envDefault:"3"`
+	WebhookConfigTTL  time.Duration `env:"WEBHOOK_CONFIG_TTL" envDefault:"30s"`
+	HeartbeatInterval time.Duration `env:"HEARTBEAT_INTERVAL" envDefault:"10s"`
 }
 
 func Load() (*Config, error) {
-	pollInterval, err := getEnvDuration("POLL_INTERVAL", "1s")
-	if err != nil {
-		return nil, err
-	}
-	webhookConfigTTL, err := getEnvDuration("WEBHOOK_CONFIG_TTL", "30s")
-	if err != nil {
-		return nil, err
-	}
-	heartbeatInterval, err := getEnvDuration("HEARTBEAT_INTERVAL", "10s")
-	if err != nil {
-		return nil, err
-	}
-	return &Config{
-		SupabaseDSN:       getEnv("SUPABASE_DSN", ""),
-		MigrationsDir:     getEnv("MIGRATIONS_DIR", "../../shared/db/migrations"),
-		StoreDSN:          getEnv("WHATSMEOW_STORE_DSN", ""),
-		BusinessAccountID: getEnv("BUSINESS_ACCOUNT_ID", ""),
-		APIURL:            getEnv("API_URL", ""),
-		InternalToken:     getEnv("INTERNAL_TOKEN", ""),
-		PollInterval:      pollInterval,
-		MaxAttempts:       getEnvInt("MAX_ATTEMPTS", 3),
-		WebhookConfigTTL:  webhookConfigTTL,
-		HeartbeatInterval: heartbeatInterval,
-	}, nil
-}
+	// Load .env values if present; never fatal when absent.
+	_ = godotenv.Load()
 
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	cfg := &Config{}
+	if err := env.Parse(cfg); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
-			return n
-		}
-	}
-	return fallback
-}
-
-func getEnvDuration(key, fallback string) (time.Duration, error) {
-	raw := getEnv(key, fallback)
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("config: parse %s %q: %w", key, raw, err)
-	}
-	return d, nil
+	return cfg, nil
 }

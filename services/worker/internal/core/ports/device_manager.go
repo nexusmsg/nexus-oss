@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 )
 
 // ErrAlreadyPaired reports that Pair was called on a device that already has a
@@ -22,7 +22,7 @@ type ActiveDeviceProvider interface {
 type DeviceManager interface {
 	// EnsureDevice provisions a device for the session. It is idempotent and
 	// auto-connects devices that already have a stored session.
-	EnsureDevice(ctx context.Context, session domain.Session) error
+	EnsureDevice(ctx context.Context, session entity.Session) error
 	// Pair generates a QR code for the given phone number ID.
 	Pair(ctx context.Context, phoneNumberID string) (string, error)
 	// Logout removes the device on successful logout.

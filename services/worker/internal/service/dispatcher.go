@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
@@ -32,20 +33,23 @@ func NewDispatcher(dispatchStore ports.JobStore, logger *log.Logger) *Dispatcher
 // whatsmeow_jobs with source_job_serial set to the original jobs serial, then
 // returns the sentinel ports.ErrDispatched so the consumer leaves the jobs row
 // 'claimed' until the whatsapp worker writes the terminal result back.
-func (d *Dispatcher) Handle(ctx context.Context, job domain.Job) (domain.JobResult, error) {
-	if job.Type == domain.JobTypeSendMessage {
-		var message domain.OutboundMessage
+func (d *Dispatcher) Handle(ctx context.Context, job entity.Job) (entity.JobResult, error) {
+	if d.dispatchStore == nil {
+		return entity.JobResult{}, errors.New("dispatcher: dispatch store is nil")
+	}
+	if job.Type == entity.JobTypeSendMessage {
+		var message entity.OutboundMessage
 		if err := json.Unmarshal(job.Payload, &message); err != nil {
-			return domain.JobResult{}, fmt.Errorf("dispatcher: unmarshal job payload: %w", err)
+			return entity.JobResult{}, fmt.Errorf("dispatcher: unmarshal job payload: %w", err)
 		}
 		if err := validateOutboundMessage(message); err != nil {
-			return domain.JobResult{}, err
+			return entity.JobResult{}, err
 		}
 	}
 	job.SourceJobSerial = job.Serial
 	if _, err := d.dispatchStore.Enqueue(ctx, job); err != nil {
-		return domain.JobResult{}, fmt.Errorf("dispatch to whatsmeow_jobs: %w", err)
+		return entity.JobResult{}, fmt.Errorf("dispatch to whatsmeow_jobs: %w", err)
 	}
 	d.logger.Printf("dispatcher: job %s dispatched to whatsmeow_jobs", job.Serial)
-	return domain.JobResult{}, ports.ErrDispatched
+	return entity.JobResult{}, ports.ErrDispatched
 }

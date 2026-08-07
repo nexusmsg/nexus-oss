@@ -48,7 +48,6 @@ cmd/
   worker/           stateless dispatcher (jobs -> whatsmeow_jobs)
   whatsapp_worker/  stateful executor (whatsmeow_jobs -> jobs write-back)
   migrate/          golang-migrate runner
-  main.go           legacy single-binary entrypoint (delete after split e2e)
 internal/
   config/           environment config (Load)
   core/domain/      event, job, outbound, session, webhook models

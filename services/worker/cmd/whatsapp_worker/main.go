@@ -8,8 +8,12 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/apiconfig"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/queue"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/whatsmeow"
 	"github.com/afikrim/waba-api-unofficial/internal/config"
+	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/afikrim/waba-api-unofficial/internal/handlers/channel"
+	"github.com/afikrim/waba-api-unofficial/internal/handlers/whatsapp"
 	"github.com/afikrim/waba-api-unofficial/internal/service"
 	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -58,9 +62,15 @@ func main() {
 	}
 
 	provider := apiconfig.NewClient(cfg.APIURL, cfg.InternalToken, cfg.WebhookConfigTTL, log.Default())
-	svc := service.NewMessage(log.Default(), provider)
+	svc := service.NewMessage(log.Default(), provider, webhook.NewClient())
 
-	manager := whatsmeow.NewDeviceManager(container, svc, cfg.BusinessAccountID, log.Default())
+	// The event-handler factory is composed here, in the root, so the
+	// whatsmeow adapter never constructs handlers-layer types itself.
+	handlerFactory := func(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, logger *log.Logger) func(ctx context.Context) func(evt any) {
+		return whatsapp.NewHandler(messageService, businessAccountID, phoneNumberID, displayPhone, logger).Handle
+	}
+
+	manager := whatsmeow.NewDeviceManager(container, svc, cfg.BusinessAccountID, handlerFactory, log.Default())
 	heartbeat := queue.NewHeartbeat(sessionStore, manager, cfg.HeartbeatInterval, log.Default())
 
 	// Boot sync: provision a device per stored session. Partial failures must
@@ -80,7 +90,7 @@ func main() {
 	}
 
 	executor := service.NewWhatsAppExecutor(manager, sessionStore, manager, jobsStore, log.Default())
-	consumer := queue.NewConsumer(queueStore, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
+	consumer := channel.NewConsumer(queueStore, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
 
 	consumerErr := make(chan error, 1)
 	go func() {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 )
 
 // SessionStore persists worker-side session and QR pairing state.
@@ -19,7 +19,7 @@ type SessionStore interface {
 	// GetSessionID returns the session ID for a phone_number_id (for FK).
 	GetSessionID(ctx context.Context, phoneNumberID string) (int64, error)
 	// ListSessions returns all non-deleted sessions, newest first.
-	ListSessions(ctx context.Context) ([]domain.Session, error)
+	ListSessions(ctx context.Context) ([]entity.Session, error)
 	// GetByPhoneNumberID returns the session for a phone number, or nil when absent.
-	GetByPhoneNumberID(ctx context.Context, phoneNumberID string) (*domain.Session, error)
+	GetByPhoneNumberID(ctx context.Context, phoneNumberID string) (*entity.Session, error)
 }

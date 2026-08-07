@@ -2,15 +2,16 @@ package apiconfig
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/apiconfig/dto"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
@@ -32,7 +33,7 @@ type Client struct {
 }
 
 type cachedConfig struct {
-	config    domain.WebhookConfig
+	config    entity.WebhookConfig
 	expiresAt time.Time
 }
 
@@ -53,39 +54,34 @@ func NewClient(apiURL, internalToken string, ttl time.Duration, logger *log.Logg
 	}
 }
 
-func (c *Client) Get(ctx context.Context, phoneNumberID string) (domain.WebhookConfig, error) {
+func (c *Client) Get(ctx context.Context, phoneNumberID string) (entity.WebhookConfig, error) {
 	if phoneNumberID == "" {
-		return domain.WebhookConfig{}, fmt.Errorf("apiconfig: phone number id is required")
+		return entity.WebhookConfig{}, fmt.Errorf("apiconfig: phone number id is required")
 	}
 
 	c.mu.Lock()
 	entry, ok := c.cache[phoneNumberID]
 	c.mu.Unlock()
-	if ok && time.Now().Before(entry.expiresAt) {
+	if ok && !dto.IsExpired(entry.expiresAt, time.Now()) {
 		return entry.config, nil
 	}
 
 	config, err := c.fetch(ctx, phoneNumberID)
 	if err != nil {
-		return domain.WebhookConfig{}, err
+		return entity.WebhookConfig{}, err
 	}
 
 	c.mu.Lock()
-	c.cache[phoneNumberID] = cachedConfig{config: config, expiresAt: time.Now().Add(c.ttl)}
+	c.cache[phoneNumberID] = cachedConfig{config: config, expiresAt: dto.ExpiresAt(time.Now(), c.ttl)}
 	c.mu.Unlock()
 	return config, nil
 }
 
-type webhookConfigResponse struct {
-	WebhookURL    string `json:"webhook_url"`
-	WebhookSecret string `json:"webhook_secret"`
-}
-
-func (c *Client) fetch(ctx context.Context, phoneNumberID string) (domain.WebhookConfig, error) {
+func (c *Client) fetch(ctx context.Context, phoneNumberID string) (entity.WebhookConfig, error) {
 	endpoint := strings.TrimRight(c.apiURL, "/") + "/internal/webhook-config"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return domain.WebhookConfig{}, fmt.Errorf("apiconfig: create request: %w", err)
+		return entity.WebhookConfig{}, fmt.Errorf("apiconfig: create request: %w", err)
 	}
 	query := req.URL.Query()
 	query.Set("phone_number_id", phoneNumberID)
@@ -96,19 +92,21 @@ func (c *Client) fetch(ctx context.Context, phoneNumberID string) (domain.Webhoo
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return domain.WebhookConfig{}, fmt.Errorf("apiconfig: fetch webhook config: %w", err)
+		return entity.WebhookConfig{}, fmt.Errorf("apiconfig: fetch webhook config: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return domain.WebhookConfig{}, fmt.Errorf("apiconfig: webhook config returned status %d", resp.StatusCode)
+		return entity.WebhookConfig{}, fmt.Errorf("apiconfig: webhook config returned status %d", resp.StatusCode)
 	}
 
-	var body webhookConfigResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return domain.WebhookConfig{}, fmt.Errorf("apiconfig: decode webhook config response: %w", err)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return entity.WebhookConfig{}, fmt.Errorf("apiconfig: read webhook config response: %w", err)
 	}
-	if body.WebhookURL == "" {
-		return domain.WebhookConfig{}, fmt.Errorf("apiconfig: webhook config response missing webhook_url")
+
+	cfg, err := dto.Parse(raw)
+	if err != nil {
+		return entity.WebhookConfig{}, err
 	}
-	return domain.WebhookConfig{URL: body.WebhookURL, Secret: body.WebhookSecret}, nil
+	return dto.ToEntity(cfg)
 }

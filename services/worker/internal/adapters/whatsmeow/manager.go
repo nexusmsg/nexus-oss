@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
@@ -14,6 +14,12 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
+
+// EventHandlerFactory builds a per-device inbound event handler. It mirrors
+// the whatsapp handler constructor's inputs and returns its Handle method
+// value, which the manager registers on the whatsmeow client. The composition
+// root injects it so this adapter never constructs handlers-layer types.
+type EventHandlerFactory func(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, logger *log.Logger) func(ctx context.Context) func(evt any)
 
 // DeviceManager provisions and drives per-device lifecycle. It routes lifecycle
 // commands directly to per-device actor goroutines, replacing the static
@@ -28,6 +34,7 @@ type DeviceManager struct {
 	container      *sqlstore.Container
 	messageService ports.MessageService
 	fallbackBAID   string
+	handlerFactory EventHandlerFactory
 	logger         *log.Logger
 }
 
@@ -36,7 +43,7 @@ var _ ports.OutboundSenderProvider = (*DeviceManager)(nil)
 
 // NewDeviceManager builds a manager. Every mutation is serialized by the
 // manager's mutex, so no manager goroutine is needed.
-func NewDeviceManager(container *sqlstore.Container, messageService ports.MessageService, fallbackBusinessAccountID string, logger *log.Logger) *DeviceManager {
+func NewDeviceManager(container *sqlstore.Container, messageService ports.MessageService, fallbackBusinessAccountID string, handlerFactory EventHandlerFactory, logger *log.Logger) *DeviceManager {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -46,6 +53,7 @@ func NewDeviceManager(container *sqlstore.Container, messageService ports.Messag
 		container:      container,
 		messageService: messageService,
 		fallbackBAID:   fallbackBusinessAccountID,
+		handlerFactory: handlerFactory,
 		logger:         logger,
 	}
 }
@@ -53,7 +61,7 @@ func NewDeviceManager(container *sqlstore.Container, messageService ports.Messag
 // EnsureDevice provisions a device for the session. It is idempotent and
 // auto-connects devices that already have a stored session. All mutation runs
 // synchronously under the manager lock.
-func (m *DeviceManager) EnsureDevice(ctx context.Context, session domain.Session) error {
+func (m *DeviceManager) EnsureDevice(ctx context.Context, session entity.Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.devices[session.PhoneNumberID]; ok {
@@ -82,8 +90,11 @@ func (m *DeviceManager) EnsureDevice(ctx context.Context, session domain.Session
 	}
 
 	ref := newDeviceRef(client, session.PhoneNumberID, m.removeDevice)
-	handler := NewHandler(m.messageService, baid, session.PhoneNumberID, displayPhone, m.logger)
-	client.AddEventHandler(handler.Handle(ref.ctx))
+	if m.handlerFactory == nil {
+		return fmt.Errorf("whatsmeow: handler factory is nil")
+	}
+	handler := m.handlerFactory(m.messageService, baid, session.PhoneNumberID, displayPhone, m.logger)
+	client.AddEventHandler(handler(ref.ctx))
 	client.AddEventHandler(m.disconnectedHandler(ref))
 
 	m.devices[session.PhoneNumberID] = ref

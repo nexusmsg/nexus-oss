@@ -1,0 +1,19 @@
+{
+  "name": "internal webhook-config missing",
+  "request": {
+    "method": "GET",
+    "urlPath": "/internal/webhook-config",
+    "queryParameters": {
+      "phone_number_id": {
+        "equalTo": "phone-itest-missing"
+      }
+    }
+  },
+  "response": {
+    "status": 404,
+    "body": "{\"error\":\"webhook config not found\"}",
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

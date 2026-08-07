@@ -3,49 +3,49 @@ package webhook
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook/dto"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
 var _ ports.WebhookForwarder = (*Client)(nil)
 
 type Client struct {
-	url        string
-	secret     string
 	httpClient *http.Client
 }
 
-func NewClient(url, secret string) *Client {
+// NewClient returns a config-agnostic webhook forwarder. The destination URL
+// and optional signing secret are read from the per-call entity.WebhookConfig.
+func NewClient() *Client {
 	return &Client{
-		url:        url,
-		secret:     secret,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-func (c *Client) Forward(ctx context.Context, payload domain.WebhookPayload) error {
-	body, err := json.Marshal(payload)
+func (c *Client) Forward(ctx context.Context, cfg entity.WebhookConfig, payload entity.WebhookPayload) error {
+	p, err := dto.FromEntity(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	body, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	if c.secret != "" {
-		sig := computeHMAC(c.secret, body)
+	if cfg.Secret != "" {
+		sig := dto.ComputeHMAC(cfg.Secret, body)
 		req.Header.Set("X-Hub-Signature-256", "sha256="+sig)
 	}
 
@@ -60,10 +60,4 @@ func (c *Client) Forward(ctx context.Context, payload domain.WebhookPayload) err
 	}
 
 	return nil
-}
-
-func computeHMAC(secret string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
 }

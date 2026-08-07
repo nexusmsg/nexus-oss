@@ -8,6 +8,7 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/queue"
 	"github.com/afikrim/waba-api-unofficial/internal/config"
+	"github.com/afikrim/waba-api-unofficial/internal/handlers/channel"
 	"github.com/afikrim/waba-api-unofficial/internal/service"
 )
 
@@ -37,7 +38,7 @@ func main() {
 	dispatchStore := queue.NewStoreWithPool(store.Pool(), "whatsmeow_jobs", log.Default())
 
 	dispatcher := service.NewDispatcher(dispatchStore, log.Default())
-	consumer := queue.NewConsumer(store, dispatcher, cfg.PollInterval, cfg.MaxAttempts, log.Default())
+	consumer := channel.NewConsumer(store, dispatcher, cfg.PollInterval, cfg.MaxAttempts, log.Default())
 
 	consumerErr := make(chan error, 1)
 	go func() {

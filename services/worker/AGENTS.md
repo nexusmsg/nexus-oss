@@ -1,5 +1,16 @@
 # Repository Guidelines
 
+> **DEPRECATION NOTICE (2026-08-07) — repo rules are deprecated; skills govern.**
+> The prescriptive rules in this file are deprecated. Judge architecture and
+> tests against the user's skills (loaded from
+> `~/.config/opencode/opencode-skills`) instead:
+>
+> - **Architecture / layering:** `hexagonal-architecture`
+> - **Test discipline:** `unit-test`, `functional-test`, `integration-test`
+>
+> Sections below marked **(DEPRECATED)** are historical rule sections; unmarked
+> sections are factual reference for the current layout and contracts.
+
 ## Project Overview
 
 `waba-api-unofficial` is a Go application that translates events from the
@@ -9,12 +20,17 @@ payloads and forwards them to a configured endpoint.
 Use Go `1.26.3` and the module path
 `github.com/afikrim/waba-api-unofficial`.
 
-## Architecture
+## Architecture (DEPRECATED)
+
+> Deprecated rule section — the *layout* below is factual reference, but the
+> dependency-direction bullets are superseded by the `hexagonal-architecture`
+> skill (entity/domain isolation, thin adapters with dto+mappers, handler
+> layer).
 
 The repository follows a small layered architecture with ports and adapters:
 
 ```text
-internal/core/domain/        Internal models, entities, and application data
+internal/core/entity/        Internal models, entities, and application data
 internal/core/ports/         Interfaces/contracts for implementations
 internal/service/            Implementations of service ports and business rules
 internal/adapters/           Third-party and external-system implementations
@@ -24,8 +40,6 @@ internal/config/             Environment-based configuration
 cmd/worker/                  Stateless dispatcher composition root (jobs -> whatsmeow_jobs)
 cmd/whatsapp_worker/         Stateful executor composition root (whatsmeow_jobs -> jobs write-back)
 cmd/migrate/                 golang-migrate runner
-cmd/main.go                  Legacy single-binary entrypoint (kept until the split
-                             e2e passes, then deleted)
 ```
 
 Keep dependency direction one-way:
@@ -70,10 +84,15 @@ The worker area ships two binaries that communicate only through the
   send actually finished.
 
 Do not put WhatsApp-library types, HTTP concerns, or webhook serialization
-logic in `internal/core/domain` or `internal/service` unless the existing
+logic in `internal/core/entity` or `internal/service` unless the existing
 design is intentionally being changed.
 
-## Implementation Conventions
+## Implementation Conventions (DEPRECATED)
+
+> Deprecated rule section — conventions follow the `hexagonal-architecture`
+> skill (ports in `internal/core/ports`, thin adapters with dto/mapper, no
+> tests on adapters/handlers). `gofmt` and error wrapping remain ordinary Go
+> hygiene.
 
 - Keep one primary concept per file and use the directory name as the package
   name.
@@ -105,21 +124,29 @@ design is intentionally being changed.
 - Run `gofmt` on every changed Go file. Keep comments short and explain why,
   not what obvious code does.
 
-## Whatsmeow Adapter Rules
+## Whatsmeow Adapter Rules (DEPRECATED)
+
+> Deprecated rule section — per the `hexagonal-architecture` skill, the
+> whatsmeow adapter should be thin glue (driver call + delegate to pure
+> functions), and event translation logic belongs in pure, unit-testable
+> mappers.
 
 - `internal/adapters/whatsmeow/client.go` owns the `whatsmeow.Client`
   lifecycle: creation, connection, QR/login handling, and disconnection.
-- `internal/adapters/whatsmeow/handler.go` is an anti-corruption layer. It
+- `internal/handlers/whatsapp/handler.go` is an anti-corruption layer. It
   type-switches raw `whatsmeow` events, unwraps them when needed, maps them to
-  `domain.InboundEvent`, and delegates to `ports.MessageService`.
+  `entity.InboundEvent`, and delegates to `ports.MessageService`.
 - Keep business rules and webhook payload construction out of the handler;
-  those belong in `internal/service` and `internal/core/domain` respectively.
+  those belong in `internal/service` and `internal/core/entity` respectively.
 - Do not leak `whatsmeow` event types through core ports or domain structs.
 - Preserve the callback shape required by `whatsmeow` when registering event
   handlers. Handler errors cannot be returned through the raw callback, so
   handle them consistently with the existing adapter behavior.
 
-## Domain and Service Rules
+## Domain and Service Rules (DEPRECATED)
+
+> Deprecated rule section — domain isolation follows `hexagonal-architecture`;
+> service behavior is verified per `functional-test` (ports mocked, offline).
 
 - Domain structs represent the internal event model and the outgoing WABA
   payload model. Keep external JSON tags on webhook payload types.
@@ -135,7 +162,11 @@ design is intentionally being changed.
 - Keep payload mapping deterministic and explicit. Do not couple it to the
   HTTP adapter.
 
-## Adapters and Configuration
+## Adapters and Configuration (DEPRECATED)
+
+> Deprecated rule section — adapter and config shape follows the
+> `hexagonal-architecture` skill (thin adapters owning dto models; config via
+> the skill's godotenv + caarlos0/env pattern).
 
 - `internal/adapters/webhook` owns JSON marshaling, HTTP request creation,
   content headers, optional `X-Hub-Signature-256` HMAC signing, response
@@ -149,30 +180,15 @@ design is intentionally being changed.
   dependencies, register handlers, connect external clients, and defer cleanup
   there.
 
-## Testing and Verification
+## Testing and Verification (DEPRECATED)
 
-There are currently no repository test files. New behavior should add focused
-`*_test.go` tests, especially for service mapping, ignored self-sent events,
-nil dependency validation, HMAC signatures, and adapter error paths.
+> Deprecated rule section — the test pyramid comes from the `unit-test` /
+> `functional-test` / `integration-test` skills (pure-function unit tests,
+> service-level functional tests with mocked ports, and integration tests with
+> mocked infra per the integration-test skill). Ordinary hygiene before
+> handoff: `gofmt -l .`, `go vet ./...`, `go test ./...`.
 
-Before submitting changes, run the narrowest relevant checks and normally:
+## Change Boundaries (DEPRECATED)
 
-```bash
-gofmt -w <changed-go-files>
-go test ./...
-go vet ./...
-```
-
-For dependency or module changes, also run `go mod tidy` and inspect the diff
-to ensure only intended module files changed. Do not commit generated binaries,
-database files, credentials, or `.opencode` index artifacts.
-
-## Change Boundaries
-
-- Prefer the smallest change that preserves the existing architecture.
-- Avoid adding compatibility layers, frameworks, global state, retries, or
-  abstractions without a concrete requirement.
-- When changing a port or domain event, inspect every implementation and
-  caller before editing; ports are the contract between independent layers.
-- Update `../../README.md` when user-visible setup, configuration, or runtime
-  behavior changes.
+> Deprecated rule section — YAGNI / complexity reduction is governed by the
+> `simplify` skill; scope and review gates by `deepwork`.

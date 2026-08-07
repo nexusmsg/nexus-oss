@@ -24,8 +24,6 @@ All values are read from environment variables via
   `whatsmeow_jobs`; no WhatsMeow, scalable).
 - `go run ./cmd/whatsapp_worker` — start the stateful executor
   (`whatsmeow_jobs` → jobs write-back; owns WhatsMeow, single instance).
-- `go run ./cmd` — legacy single-binary entrypoint (kept until the split e2e
-  passes, then deleted).
 
 Both worker binaries read the same env block; `cmd/worker` ignores the
 WhatsMeow/session-related vars (`WHATSMEOW_STORE_DSN`, `BUSINESS_ACCOUNT_ID`,

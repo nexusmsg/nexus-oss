@@ -1,0 +1,19 @@
+{
+  "name": "webhook forward accepted (signature-gated)",
+  "request": {
+    "method": "POST",
+    "urlPath": "/hooks/wa/inbound",
+    "headers": {
+      "X-Hub-Signature-256": {
+        "equalTo": "sha256=1dad889dee96704184daa4c4bcf7a152ee8e33060477ffdbbf315ca6b8621d18"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "bodyFileName": "webhook-forward-ok.json",
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

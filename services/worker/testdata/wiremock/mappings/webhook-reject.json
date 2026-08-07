@@ -1,0 +1,14 @@
+{
+  "name": "webhook forward rejected (non-2xx)",
+  "request": {
+    "method": "POST",
+    "urlPath": "/hooks/wa/reject"
+  },
+  "response": {
+    "status": 503,
+    "body": "{\"error\":\"temporarily unavailable\"}",
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

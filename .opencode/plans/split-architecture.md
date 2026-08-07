@@ -118,7 +118,7 @@ sequenceDiagram
     participant C as Customer Webhook
 
     A->>W: Incoming message event (on device connection)
-    W->>W: Translate event → domain.InboundEvent (existing handler)
+    W->>W: Translate event → entity.InboundEvent (existing handler)
     W->>H: GET /internal/webhook-config?phone_number_id=...
     H-->>W: { webhook_url, webhook_secret }
     W->>W: Build WABA webhook payload (existing service)
@@ -411,7 +411,7 @@ Replicate WABA contact features achievable via the WhatsApp device protocol (no 
 - Map vCard properties: `FN`→`name.formatted_name`, `N`→`name.*`, `TEL`→`phones[]`, `EMAIL`→`emails[]`, `ADR`→`addresses[]`, `ORG`→`org.*`, `URL`→`urls[]`, `BDAY`→`birthday`.
 - `phones[].wa_id` populated via `IsOnWhatsApp` lookup (internal, not exposed as API).
 - New adapter: `internal/adapters/vcard/` using `github.com/emersion/go-vcard`.
-- Handler (`internal/adapters/whatsmeow/handler.go`) extracts `GetContactMessage()` / `GetContactsArrayMessage()`, delegates to service.
+- Handler (`internal/handlers/whatsapp/handler.go`) extracts `GetContactMessage()` / `GetContactsArrayMessage()`, delegates to service.
 - Service (`internal/service/message.go`) builds WABA payload with parsed `contacts[]` array.
 
 **Outbound (WABA → WhatsMeow):**
@@ -506,6 +506,39 @@ create unique index contacts_phone_unique_idx on public.contacts (phone_number_i
 10. **M10 — vCard Mapping:** inbound parse (`go-vcard` → ContactObject), outbound construct (ContactObject → vCard), handler + service wiring, tests.
 11. **M11 — System Message:** stub type detection (`INDIVIDUAL_CHANGE_NUMBER`, `GROUP_PARTICIPANT_CHANGE_NUMBER`), WABA `system` webhook emission, contact auto-update on phone change.
 12. **M12 — Contact Book API:** migration `000006`, CRUD endpoints in API, auto-populate in worker, `smb_app_state_sync` webhook emission, integration tests.
+13. **M13 — `whatsmeow_jobs` migration + parameterized `Store` (Completed):**
+    migration `000007` clones `jobs` with `source_job_serial uuid`; `Store`
+    gained a `table` field (trusted constructor constant) + `ownsPool`;
+    `NewStore`/`NewStoreWithPool`; all SQL interpolates `s.table`. Commit `52220d1`.
+14. **M14 — dispatcher + executor + two entrypoints (Completed):**
+    `ports.ErrDispatched` sentinel; `Store.Enqueue`; `internal/service/dispatcher.go`
+    (validates send payloads, sets `SourceJobSerial`, returns `ErrDispatched` —
+    row stays `claimed`); `internal/service/whatsapp_executor.go` (whatsmeow_jobs
+    consumer executor with `jobs` write-back via `source_job_serial`; terminal
+    when `attempts >= max_attempts`); `cmd/worker` (stateless dispatcher) +
+    `cmd/whatsapp_worker` (stateful executor); compose splits
+    `worker`/`whatsapp_worker`. Commit `b6c8006`.
+15. **M15 — hexagonal closure + test pyramid + legacy removal (Completed):**
+    service layer imports no adapters (`WebhookForwarder` port,
+    `NewMessage(logger, provider, forwarder)`); deleted `cmd/main.go` +
+    `internal/service/executor.go`; unit/functional/integration test pyramid
+    complete (127 tests / 13 packages; 24/24 real-DB integration incl. split
+    dispatch + write-back); production fixes surfaced: vcard VERSION,
+    dispatcher nil-guard, table-aware `Store.Enqueue`.
+16. **M16 — skill-compliance restructure: test pyramid + handlers layer +
+    composition-root injection (Completed):** worker tests re-scoped to the
+    skills' pyramid — unit = pure functions (`core/entity`,
+    `adapters/*/dto` mappers, `handlers/whatsapp/dto`, `service/validate`);
+    functional = `internal/service` with mocked ports + sleeper injection;
+    integration = `test/integration/` behind `//go:build integration`
+    (WireMock + goldens, and real-Postgres `-run RealDB` gated on
+    `TEST_DATABASE_URL`). New `internal/handlers/channel/` (queue consumer
+    `NewConsumer`/`Run`/`processJob`) and `internal/handlers/whatsapp/`
+    (inbound handler constructed in `cmd/whatsapp_worker` and injected into
+    `DeviceManager` via `EventHandlerFactory` — M16 finding-1 fix). `domain`
+    package renamed `entity`; the whatsmeow handler, queue consumer (+ tests),
+    and old adapter-level tests deleted. Verification: 168/18/0 + race 61 +
+    WireMock 5 + RealDB 16; oracle Gate 2 PASS.
 
 ## Acceptance Criteria
 
@@ -549,3 +582,9 @@ create unique index contacts_phone_unique_idx on public.contacts (phone_number_i
 | 2026-08-04 | M6 | `go test ./...`, `go vet ./...`, CGO build (worker) + `npm run build`/`test` (api) | Go 58 tests / 10 pkgs, vet clean, CGO-free build OK; api tsc clean, 51 tests |
 | 2026-08-04 | M6 | e2e compose: `POST /1001/messages` through the stack | Job enqueued (PostgREST 201) → worker claimed, 3 attempts, failed → API polled to terminal → WABA 500 with `last_error: executor: no sender for phone number id "1001"` (~5.9s) — proves full API→PostgREST→jobs→worker→executor→response chain |
 | 2026-08-04 | M6 | Integration gap fixes (found during e2e) | ① PostgREST 401 PGRST301 on plain dev keys → dev keys now HS256 JWTs (`{"role":"postgres"}` signed with PGRST_JWT_SECRET) ② supabase-js appended `/rest/v1` → PGRST125 on bare PostgREST (prefix is Kong's job in real Supabase) → swapped to `@supabase/postgrest-js` (URL used as-is) ③ poll `deleted_at=eq.null` → SQLSTATE 22007 → `.is("deleted_at", null)`; all live-verified (200/201/204 + graceful 500) |
+| 2026-08-06 | M13 | `go test ./...` (services/worker) | 102 passed (14 packages); `whatsmeow_jobs` migration + table-parameterized Store |
+| 2026-08-06 | M14 | `go test ./...`, `go vet ./...`, `CGO_ENABLED=0 go build ./cmd/...` (services/worker) | 102 passed (14 packages); vet clean; build OK (worker, whatsapp_worker, migrate); two-binary split with `ErrDispatched` + `jobs` write-back |
+| 2026-08-07 | M15 | `gofmt -l .`; `go vet ./...`; `go test ./... -count=1`; `CGO_ENABLED=0 go build ./cmd/...`; `go test -race ./internal/service ./internal/adapters/queue` (services/worker) | gofmt clean; vet clean; **127 passed (13 packages)**; build OK; race 68 passed (2 packages); legacy `cmd/main.go` + `internal/service/executor.go` deleted; service layer adapter-free |
+| 2026-08-07 | M15 | real-DB integration `TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5433/waba?sslmode=disable go test ./internal/adapters/queue -count=1 -v` (throwaway `waba-it-postgres` on :5433, torn down after) | **24 passed / 24** — TestSplitDispatchContract, TestSplitWriteBackContract (success + terminal failure), TestSplitClaimSemantics, TestStoreIntegration, TestSessionStoreIntegration (no skips/failures); exposed + fixed latent table-aware `Store.Enqueue` bug |
+| 2026-08-07 | M16 | `gofmt -l .`; `go vet ./...`; `go build ./...`; `go test ./...`; `go test -race ./internal/service/...`; `go test -tags integration ./test/integration/... -run 'Webhook|Apiconfig'` (WireMock 3.13.2 via throwaway container); `TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5433/waba_test?sslmode=disable go test -tags integration ./test/integration/... -run RealDB` (throwaway postgres:16-alpine on :5433, torn down after) | gofmt clean; vet clean; build OK; **168 passed / 18 pkgs / 0 FAIL**; race **61 PASS**; WireMock **5 PASS**; RealDB **16 PASS**; oracle Gate 2 review PASS |
+| 2026-08-07 | M16 post-2.5 | `gofmt -l .`; `go vet ./...` (both tags); `go build ./...`; `go test ./... -count=1` (services/worker) | gofmt clean; vet clean (both tags); build clean; **168 passed / 18 pkgs** |

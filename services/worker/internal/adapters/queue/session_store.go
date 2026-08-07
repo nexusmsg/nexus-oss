@@ -7,7 +7,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/queue/dto"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -93,7 +94,7 @@ values ($1, $2, $3, 'ready', $4)`, sessionID, phoneNumberID, qrCode, expiresAt)
 }
 
 // ListSessions returns all non-deleted sessions, newest first.
-func (s *SessionStore) ListSessions(ctx context.Context) ([]domain.Session, error) {
+func (s *SessionStore) ListSessions(ctx context.Context) ([]entity.Session, error) {
 	rows, err := s.pool.Query(ctx, `
 select phone_number_id, number, display_phone, business_account_id, status
 from sessions
@@ -104,23 +105,16 @@ order by created_at desc, id desc`)
 	}
 	defer rows.Close()
 
-	sessions := make([]domain.Session, 0)
-	for rows.Next() {
-		session, err := scanSession(rows)
-		if err != nil {
-			return nil, fmt.Errorf("session store: scan session: %w", err)
-		}
-		sessions = append(sessions, session)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("session store: iterate sessions: %w", err)
+	sessions, err := dto.CollectSessions(rows)
+	if err != nil {
+		return nil, fmt.Errorf("session store: scan sessions: %w", err)
 	}
 	return sessions, nil
 }
 
 // GetByPhoneNumberID returns the session for a phone number, or nil when absent.
-func (s *SessionStore) GetByPhoneNumberID(ctx context.Context, phoneNumberID string) (*domain.Session, error) {
-	session, err := scanSession(s.pool.QueryRow(ctx, `
+func (s *SessionStore) GetByPhoneNumberID(ctx context.Context, phoneNumberID string) (*entity.Session, error) {
+	d, err := dto.ScanSession(s.pool.QueryRow(ctx, `
 select phone_number_id, number, display_phone, business_account_id, status
 from sessions
 where phone_number_id = $1 and deleted_at is null`, phoneNumberID))
@@ -130,25 +124,6 @@ where phone_number_id = $1 and deleted_at is null`, phoneNumberID))
 		}
 		return nil, fmt.Errorf("session store: get session by phone number %q: %w", phoneNumberID, err)
 	}
+	session := dto.ToSession(d)
 	return &session, nil
-}
-
-// rowScanner is satisfied by both *pgx.Rows and *pgx.Row, so a single scan
-// helper can back both ListSessions and GetByPhoneNumberID.
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-// scanSession maps a session row into domain.Session. The column order must
-// match the SELECT column list used by the two queries above.
-func scanSession(row rowScanner) (domain.Session, error) {
-	var session domain.Session
-	err := row.Scan(
-		&session.PhoneNumberID,
-		&session.Number,
-		&session.DisplayPhone,
-		&session.BusinessAccountID,
-		&session.Status,
-	)
-	return session, err
 }

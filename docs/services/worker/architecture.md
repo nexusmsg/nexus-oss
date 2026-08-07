@@ -4,17 +4,19 @@ Follow `services/worker/AGENTS.md` for the authoritative layering rules.
 
 ## Layering
 
-Dependency direction is one-way: `domain ← ports ← service ← adapters`,
+Dependency direction is one-way: `entity ← ports ← service ← adapters`,
 with `cmd` as the composition root.
 
 ```text
 cmd/worker/            stateless dispatcher composition root
-cmd/whatsapp_worker/   stateful executor composition root
+cmd/whatsapp_worker/   stateful executor composition root (constructs the
+                       whatsapp handler and injects it into DeviceManager)
 cmd/migrate/           golang-migrate runner
    │
-internal/core/domain/          internal models (no external imports)
+internal/core/entity/          internal models (no external imports)
 internal/core/ports/           contracts (interfaces + sentinel errors)
-internal/service/              use cases: dispatcher, whatsapp executor, message, outbound
+internal/service/              use cases: dispatcher, whatsapp executor, message, validate
+internal/handlers/             channel (queue consumer), whatsapp (inbound event handler)
 internal/adapters/             whatsmeow, queue, webhook, apiconfig
 ```
 
@@ -28,12 +30,12 @@ terminal status + `result.wa_message_id`.
 
 ```text
 API POST /:phone_number_id/messages -> jobs row (pending)
-  -> cmd/worker: adapters/queue consumer claims the jobs row
+  -> cmd/worker: handlers/channel consumer claims the jobs row
        (FOR UPDATE SKIP LOCKED, marks it 'claimed')
   -> service/dispatcher.go: validate payload -> INSERT into whatsmeow_jobs
        with source_job_serial = jobs.serial -> return ports.ErrDispatched
   -> consumer leaves the jobs row 'claimed' (no Complete/Retry/Fail)
-  -> cmd/whatsapp_worker: adapters/queue consumer claims the whatsmeow_jobs row
+  -> cmd/whatsapp_worker: handlers/channel consumer claims the whatsmeow_jobs row
   -> service/whatsapp_executor.go: ensureDevice -> validate -> DeviceManager.Sender
        -> whatsmeow.SendMessage -> wamid
   -> executor writes back to jobs via source_job_serial:
@@ -56,11 +58,12 @@ API POST /:phone_number_id/messages -> jobs row (pending)
 ### Inbound (WhatsApp → customer webhook) — cmd/whatsapp_worker only
 ```text
 WhatsMeow event
-  -> adapters/whatsmeow/handler.go (anti-corruption, unwrap)
-  -> domain.InboundEvent
+  -> handlers/whatsapp/handler.go (anti-corruption, unwrap; constructed in
+     cmd/whatsapp_worker and injected into DeviceManager via EventHandlerFactory)
+  -> entity.InboundEvent
   -> service/message.go (WABA payload construction, self-sent ignored)
   -> ports.WebhookConfigProvider (apiconfig, TTL cache)
-     GET {API_URL}/internal/v1/webhook-config?phone_number_id=...
+     GET {API_URL}/internal/webhook-config?phone_number_id=...
   -> adapters/webhook/client.go (HMAC X-Hub-Signature-256, retry, 15s timeout)
   -> customer webhook endpoint
 ```

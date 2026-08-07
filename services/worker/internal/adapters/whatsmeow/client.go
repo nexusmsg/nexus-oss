@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/adapters/vcard"
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/whatsmeow/dto"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -135,132 +135,37 @@ func (c *Client) Disconnect() {
 
 // Send delivers an outbound message synchronously. It serializes the send
 // under sendMu, so Disconnect blocks until any in-flight send completes.
-func (c *Client) Send(ctx context.Context, message domain.OutboundMessage) (domain.SendResult, error) {
+func (c *Client) Send(ctx context.Context, message entity.OutboundMessage) (entity.SendResult, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 
 	if c.closed {
-		return domain.SendResult{}, errors.New("whatsapp sender is closed")
+		return entity.SendResult{}, errors.New("whatsapp sender is closed")
 	}
-	if message.Text == nil && message.Type != "contacts" {
-		return domain.SendResult{}, errors.New("text message is missing")
+	msg, err := dto.ToWaE2EMessage(message)
+	if err != nil {
+		return entity.SendResult{}, err
 	}
 	select {
 	case <-ctx.Done():
-		return domain.SendResult{}, ctx.Err()
+		return entity.SendResult{}, ctx.Err()
 	default:
 	}
 
 	jid, err := types.ParseJID(message.To + "@s.whatsapp.net")
 	if err != nil {
-		return domain.SendResult{}, fmt.Errorf("parse recipient: %w", err)
-	}
-
-	var msg *waE2E.Message
-	if message.Type == "contacts" {
-		msg = buildContactMessage(message.Contacts)
-		if msg == nil {
-			return domain.SendResult{}, errors.New("contacts message is missing contacts")
-		}
-	} else {
-		text := message.Text.Body
-		msg = &waE2E.Message{Conversation: &text}
+		return entity.SendResult{}, fmt.Errorf("parse recipient: %w", err)
 	}
 
 	response, err := c.send(ctx, jid, msg)
 	if err != nil {
-		return domain.SendResult{}, err
+		return entity.SendResult{}, err
 	}
-	return domain.SendResult{
+	return entity.SendResult{
 		ID:        string(response.ID),
 		Recipient: jid.User,
 		Timestamp: response.Timestamp,
 	}, nil
-}
-
-// buildContactMessage creates a WhatsApp contact message from domain contacts.
-// Returns ContactMessage for single contact, ContactsArrayMessage for multiple.
-func buildContactMessage(contacts []domain.ContactInput) *waE2E.Message {
-	if len(contacts) == 0 {
-		return nil
-	}
-
-	if len(contacts) == 1 {
-		vcardStr, err := buildSingleVCard(contacts[0])
-		if err != nil {
-			return nil
-		}
-		displayName := contacts[0].Name.FormattedName
-		return &waE2E.Message{
-			ContactMessage: &waE2E.ContactMessage{
-				DisplayName: &displayName,
-				Vcard:       &vcardStr,
-			},
-		}
-	}
-
-	// Multiple contacts → ContactsArrayMessage
-	var waContacts []*waE2E.ContactMessage
-	var arrayName string
-	for i, c := range contacts {
-		vcardStr, err := buildSingleVCard(c)
-		if err != nil {
-			continue
-		}
-		name := c.Name.FormattedName
-		waContacts = append(waContacts, &waE2E.ContactMessage{
-			DisplayName: &name,
-			Vcard:       &vcardStr,
-		})
-		if i == 0 && name != "" {
-			arrayName = name
-		}
-	}
-	if len(waContacts) == 0 {
-		return nil
-	}
-	return &waE2E.Message{
-		ContactsArrayMessage: &waE2E.ContactsArrayMessage{
-			DisplayName: &arrayName,
-			Contacts:    waContacts,
-		},
-	}
-}
-
-// buildSingleVCard converts one ContactInput into a vCard string.
-func buildSingleVCard(c domain.ContactInput) (string, error) {
-	evt := domain.ContactEvent{
-		Birthday: c.Birthday,
-		Name: domain.NameEvent{
-			FormattedName: c.Name.FormattedName,
-			FirstName:     c.Name.FirstName,
-			LastName:      c.Name.LastName,
-			MiddleName:    c.Name.MiddleName,
-			Prefix:        c.Name.Prefix,
-			Suffix:        c.Name.Suffix,
-		},
-		Org: domain.OrganizationEvent{
-			Company:    c.Org.Company,
-			Department: c.Org.Department,
-			Title:      c.Org.Title,
-		},
-	}
-	for _, p := range c.Phones {
-		evt.Phones = append(evt.Phones, domain.PhoneEvent{Phone: p.Phone, Type: p.Type, WaID: p.WaID})
-	}
-	for _, e := range c.Emails {
-		evt.Emails = append(evt.Emails, domain.EmailEvent{Email: e.Email, Type: e.Type})
-	}
-	for _, a := range c.Addresses {
-		evt.Addresses = append(evt.Addresses, domain.AddressEvent{
-			Street: a.Street, City: a.City, State: a.State,
-			Zip: a.Zip, Country: a.Country, CountryCode: a.CountryCode,
-		})
-	}
-	for _, u := range c.URLs {
-		evt.URLs = append(evt.URLs, domain.URLEvent{URL: u.URL, Type: u.Type})
-	}
-	return vcard.BuildVCard(evt)
 }
 
 // AddEventHandler registers a raw whatsmeow event handler.

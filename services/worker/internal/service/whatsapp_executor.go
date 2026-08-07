@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
@@ -40,13 +40,13 @@ func NewWhatsAppExecutor(provider ports.OutboundSenderProvider, sessionStore por
 	return &WhatsAppExecutor{provider: provider, sessionStore: sessionStore, manager: manager, jobsStore: jobsStore, logger: logger}
 }
 
-func (e *WhatsAppExecutor) Handle(ctx context.Context, job domain.Job) (domain.JobResult, error) {
-	var result domain.JobResult
+func (e *WhatsAppExecutor) Handle(ctx context.Context, job entity.Job) (entity.JobResult, error) {
+	var result entity.JobResult
 	var err error
 	switch job.Type {
-	case domain.JobTypePairing:
+	case entity.JobTypePairing:
 		result, err = e.handlePairing(ctx, job)
-	case domain.JobTypeLogout:
+	case entity.JobTypeLogout:
 		result, err = e.handleLogout(ctx, job)
 	default:
 		result, err = e.handleSendMessage(ctx, job)
@@ -57,7 +57,7 @@ func (e *WhatsAppExecutor) Handle(ctx context.Context, job domain.Job) (domain.J
 		// incremented by the claim, >= max_attempts) the consumer will Fail it,
 		// so also fail the originating jobs row. On retryable attempts the jobs
 		// row stays 'claimed' and will be written back on a later retry.
-		if job.SourceJobSerial != "" && e.jobsStore != nil && isTerminalAttempt(job) {
+		if job.SourceJobSerial != "" && e.jobsStore != nil && entity.IsTerminalAttempt(job.Attempts, job.MaxAttempts) {
 			if failErr := e.jobsStore.Fail(ctx, job.SourceJobSerial, err); failErr != nil {
 				e.logger.Printf("executor: write back failure for job %s: %v", job.SourceJobSerial, failErr)
 			}
@@ -75,18 +75,10 @@ func (e *WhatsAppExecutor) Handle(ctx context.Context, job domain.Job) (domain.J
 	return result, nil
 }
 
-// isTerminalAttempt mirrors the consumer's terminal-failure condition
-// (internal/adapters/queue/consumer.go): a job fails when attempts >=
-// max_attempts. whatsmeow_jobs rows always carry max_attempts (default 3), so
-// the consumer's env fallback never engages for them.
-func isTerminalAttempt(job domain.Job) bool {
-	return job.MaxAttempts > 0 && job.Attempts >= job.MaxAttempts
-}
-
 // ensureDevice fetches the session for the job's phone number and provisions a
 // device for it. A job whose session no longer exists fails with a clear error
 // instead of resolving a sender or pair flow against a missing device.
-func (e *WhatsAppExecutor) ensureDevice(ctx context.Context, jobKind string, phoneNumberID string) (*domain.Session, error) {
+func (e *WhatsAppExecutor) ensureDevice(ctx context.Context, jobKind string, phoneNumberID string) (*entity.Session, error) {
 	if e.sessionStore == nil {
 		return nil, errors.New("executor: session store is nil")
 	}
@@ -108,12 +100,12 @@ func (e *WhatsAppExecutor) ensureDevice(ctx context.Context, jobKind string, pho
 
 // handlePairing marks the session as pairing, generates a QR code, persists it,
 // then returns the session to the ready (created) state.
-func (e *WhatsAppExecutor) handlePairing(ctx context.Context, job domain.Job) (domain.JobResult, error) {
+func (e *WhatsAppExecutor) handlePairing(ctx context.Context, job entity.Job) (entity.JobResult, error) {
 	if _, err := e.ensureDevice(ctx, "pairing", job.PhoneNumberID); err != nil {
-		return domain.JobResult{}, err
+		return entity.JobResult{}, err
 	}
-	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, domain.SessionStatusPairing); err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: mark session pairing: %w", err)
+	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, entity.SessionStatusPairing); err != nil {
+		return entity.JobResult{}, fmt.Errorf("executor: mark session pairing: %w", err)
 	}
 	qrCode, err := e.manager.Pair(ctx, job.PhoneNumberID)
 	if err != nil {
@@ -121,71 +113,71 @@ func (e *WhatsAppExecutor) handlePairing(ctx context.Context, job domain.Job) (d
 		// as a success so it does not retry forever.
 		if errors.Is(err, ports.ErrAlreadyPaired) {
 			e.logger.Printf("executor: device %q already paired; treating pairing job as success", job.PhoneNumberID)
-			if statusErr := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, domain.SessionStatusCreated); statusErr != nil {
-				return domain.JobResult{}, fmt.Errorf("executor: reset status after already-paired: %w", statusErr)
+			if statusErr := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, entity.SessionStatusCreated); statusErr != nil {
+				return entity.JobResult{}, fmt.Errorf("executor: reset status after already-paired: %w", statusErr)
 			}
-			return domain.JobResult{}, nil
+			return entity.JobResult{}, nil
 		}
 		// Return the session to ready state so a later retry can pair again.
-		if statusErr := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, domain.SessionStatusCreated); statusErr != nil {
-			return domain.JobResult{}, fmt.Errorf("executor: reset status after pair failure: %w", statusErr)
+		if statusErr := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, entity.SessionStatusCreated); statusErr != nil {
+			return entity.JobResult{}, fmt.Errorf("executor: reset status after pair failure: %w", statusErr)
 		}
-		return domain.JobResult{}, fmt.Errorf("executor: pair device %q: %w", job.PhoneNumberID, err)
+		return entity.JobResult{}, fmt.Errorf("executor: pair device %q: %w", job.PhoneNumberID, err)
 	}
 	if err := e.sessionStore.StoreQrCode(ctx, job.PhoneNumberID, qrCode, time.Now().Add(whatsmeowQRCodeTTL)); err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: store qr code: %w", err)
+		return entity.JobResult{}, fmt.Errorf("executor: store qr code: %w", err)
 	}
-	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, domain.SessionStatusCreated); err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: reset status after pairing: %w", err)
+	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, entity.SessionStatusCreated); err != nil {
+		return entity.JobResult{}, fmt.Errorf("executor: reset status after pairing: %w", err)
 	}
-	return domain.JobResult{}, nil
+	return entity.JobResult{}, nil
 }
 
 // handleLogout disconnects the device and marks the session logged out.
-func (e *WhatsAppExecutor) handleLogout(ctx context.Context, job domain.Job) (domain.JobResult, error) {
+func (e *WhatsAppExecutor) handleLogout(ctx context.Context, job entity.Job) (entity.JobResult, error) {
 	if _, err := e.ensureDevice(ctx, "logout", job.PhoneNumberID); err != nil {
-		return domain.JobResult{}, err
+		return entity.JobResult{}, err
 	}
 	if err := e.manager.Logout(ctx, job.PhoneNumberID); err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: logout device %q: %w", job.PhoneNumberID, err)
+		return entity.JobResult{}, fmt.Errorf("executor: logout device %q: %w", job.PhoneNumberID, err)
 	}
-	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, domain.SessionStatusLoggedOut); err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: update logout status: %w", err)
+	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, entity.SessionStatusLoggedOut); err != nil {
+		return entity.JobResult{}, fmt.Errorf("executor: update logout status: %w", err)
 	}
-	return domain.JobResult{}, nil
+	return entity.JobResult{}, nil
 }
 
-func (e *WhatsAppExecutor) handleSendMessage(ctx context.Context, job domain.Job) (domain.JobResult, error) {
+func (e *WhatsAppExecutor) handleSendMessage(ctx context.Context, job entity.Job) (entity.JobResult, error) {
 	if e.provider == nil {
-		return domain.JobResult{}, fmt.Errorf("executor: outbound sender provider is nil")
+		return entity.JobResult{}, fmt.Errorf("executor: outbound sender provider is nil")
 	}
 
-	var message domain.OutboundMessage
+	var message entity.OutboundMessage
 	if err := json.Unmarshal(job.Payload, &message); err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: unmarshal job payload: %w", err)
+		return entity.JobResult{}, fmt.Errorf("executor: unmarshal job payload: %w", err)
 	}
 	if err := validateOutboundMessage(message); err != nil {
-		return domain.JobResult{}, err
+		return entity.JobResult{}, err
 	}
 
 	// Lazy-provision the device so jobs arriving after boot (e.g. from the API
 	// POST /sessions) work without a restart.
 	if _, err := e.ensureDevice(ctx, "send", job.PhoneNumberID); err != nil {
-		return domain.JobResult{}, err
+		return entity.JobResult{}, err
 	}
 
 	sender, err := e.provider.Sender(job.PhoneNumberID)
 	if err != nil {
 		var notFound *ports.ErrSenderNotFound
 		if errors.As(err, &notFound) {
-			return domain.JobResult{}, fmt.Errorf("executor: no sender for phone number %q: %w", job.PhoneNumberID, err)
+			return entity.JobResult{}, fmt.Errorf("executor: no sender for phone number %q: %w", job.PhoneNumberID, err)
 		}
-		return domain.JobResult{}, fmt.Errorf("executor: resolve sender for phone number %q: %w", job.PhoneNumberID, err)
+		return entity.JobResult{}, fmt.Errorf("executor: resolve sender for phone number %q: %w", job.PhoneNumberID, err)
 	}
 
 	result, err := sender.Send(ctx, message)
 	if err != nil {
-		return domain.JobResult{}, fmt.Errorf("executor: send outbound message: %w", err)
+		return entity.JobResult{}, fmt.Errorf("executor: send outbound message: %w", err)
 	}
-	return domain.JobResult{WA_MESSAGE_ID: result.ID}, nil
+	return entity.JobResult{WA_MESSAGE_ID: result.ID}, nil
 }

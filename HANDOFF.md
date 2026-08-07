@@ -100,7 +100,7 @@ api: tsc clean, 51 tests passed
 
 `services/api` now exposes the two endpoints the worker consumes/produces:
 
-- `POST /:phone_number_id/messages` — bearer auth (`API_AUTH_TOKEN`), WABA validation (mirrors `service/outbound.go`), optional idempotency key (header wins over body), enqueues a `send_message` job, polls the job row until `SEND_TIMEOUT_MS` (default 25000) every `RESULT_POLL_MS` (default 250), returns the official WABA 200 envelope with the real `wamid` from `result.wa_message_id`, or a WABA error envelope (504 on timeout).
+- `POST /:phone_number_id/messages` — bearer auth (`API_AUTH_TOKEN`), WABA validation (mirrors `internal/service/validate.go`), optional idempotency key (header wins over body), enqueues a `send_message` job, polls the job row until `SEND_TIMEOUT_MS` (default 25000) every `RESULT_POLL_MS` (default 250), returns the official WABA 200 envelope with the real `wamid` from `result.wa_message_id`, or a WABA error envelope (504 on timeout).
 - `GET /internal/webhook-config?phone_number_id=...` — bearer auth (`INTERNAL_TOKEN`), returns `{ webhook_url, webhook_secret }` (secret null-able); 404 when absent.
 
 Env: `PORT`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `API_AUTH_TOKEN`, `INTERNAL_TOKEN`, `SEND_TIMEOUT_MS`, `RESULT_POLL_MS`.
@@ -113,8 +113,8 @@ Paths below are relative to `services/worker/`.
 
 ```text
 WhatsMeow event
-  -> internal/adapters/whatsmeow/handler.go (per-device)
-  -> domain.InboundEvent
+  -> internal/handlers/whatsapp/handler.go (per-device, constructed in cmd/whatsapp_worker)
+  -> entity.InboundEvent
   -> internal/service/message.go
   -> WABA payload construction
   -> payload log
@@ -126,8 +126,8 @@ WhatsMeow event
 
 Outbound job
   API POST /:phone_number_id/messages -> jobs row (pending)
-  -> internal/adapters/queue consumer (Claim, FOR UPDATE SKIP LOCKED)
-  -> internal/service/executor.go: lazy ensureDevice (GetByPhoneNumberID ->
+  -> internal/handlers/channel consumer (Claim, FOR UPDATE SKIP LOCKED)
+  -> internal/service/whatsapp_executor.go: lazy ensureDevice (GetByPhoneNumberID ->
      DeviceManager.EnsureDevice; missing session fails the job) -> unmarshal
      payload -> validate
   -> whatsmeow.DeviceManager.Sender(phone_number_id) -> per-device bounded
@@ -194,7 +194,7 @@ MIGRATIONS_DIR="../../shared/db/migrations"
 Run the application with:
 
 ```bash
-go run ./cmd
+go run ./cmd/whatsapp_worker
 ```
 
 Devices are provisioned from the `sessions` table: each stored session is
@@ -229,8 +229,8 @@ destinations now come from the API's internal webhook-config endpoint.
   `BUSINESS_ACCOUNT_ID`; it cannot be derived from a normal WhatsApp sender
   number.
 - `config` stays dependency-free: devices are provisioned from the `sessions`
-  table; `cmd/main.go` boot-syncs stored sessions into `DeviceManager` via
-  `ListSessions` → `EnsureDevice` → `ConnectStored`.
+  table; `cmd/whatsapp_worker/main.go` boot-syncs stored sessions into
+  `DeviceManager` via `ListSessions` → `EnsureDevice` → `ConnectStored`.
 
 ## Deferred Work
 
@@ -256,7 +256,9 @@ Paths are relative to `services/worker/` unless noted.
 - `AGENTS.md` (repo root): repository architecture and implementation rules.
 - `docs/api-mapping-webhook.md`: source mapping specification.
 - `.opencode/plans/waba-webhook-mapping.md`: milestone and verification tracker.
-- `internal/adapters/whatsmeow/handler.go`: raw WhatsMeow event translation.
+- `internal/handlers/whatsapp/handler.go`: raw WhatsMeow event translation
+  (anti-corruption layer; constructed in `cmd/whatsapp_worker` and injected
+  into `DeviceManager` via `EventHandlerFactory`).
 - `internal/adapters/whatsmeow/manager.go`: `DeviceManager` — manager
   goroutine, EnsureDevice/Pair/Logout/ConnectStored routing, ActiveDevices,
   Shutdown, Sender lookup (implements `ports.DeviceManager` +
@@ -270,18 +272,23 @@ Paths are relative to `services/worker/` unless noted.
   + `ErrAlreadyPaired` sentinel.
 - `internal/service/message.go`: WABA payload mapping, logging, and forwarding
   via the webhook-config provider.
-- `internal/service/executor.go`: outbound job executor (`ports.JobHandler`)
-  with lazy device ensure via `SessionStore.GetByPhoneNumberID`.
+- `internal/service/whatsapp_executor.go`: outbound job executor
+  (`ports.JobHandler`) with lazy device ensure via
+  `SessionStore.GetByPhoneNumberID` and `jobs` write-back via
+  `source_job_serial`.
 - `internal/adapters/webhook/client.go`: HTTP, HMAC, timeout, and response handling.
-- `internal/adapters/queue/`: pgx `JobStore` (SKIP LOCKED) + poll consumer +
-  `SessionStore` (ListSessions/GetByPhoneNumberID/UpdateHeartbeats) +
-  batched `Heartbeat`.
+- `internal/adapters/queue/`: pgx `JobStore` (SKIP LOCKED) + `SessionStore`
+  (ListSessions/GetByPhoneNumberID/UpdateHeartbeats) + batched `Heartbeat`.
+- `internal/handlers/channel/`: `NewConsumer` poll loop + `processJob` (the
+  queue consumer; moved here from the deleted `internal/adapters/queue`
+  consumer).
 - `internal/adapters/apiconfig/client.go`: webhook-config provider (TTL cache).
-- `internal/core/domain/`: internal event, payload, job, and session models.
+- `internal/core/entity/`: internal event, payload, job, and session models.
 - `internal/core/ports/`: service contracts (sender, device manager, job
   store/handler, session store, webhook config provider).
-- `cmd/main.go`: dependency composition, boot sync, and shutdown lifecycle.
-- `internal/service/outbound.go`: outbound validation (reused by the executor).
+- `cmd/worker/main.go` / `cmd/whatsapp_worker/main.go`: two composition roots
+  (stateless dispatcher / stateful WhatsApp executor).
+- `internal/service/validate.go`: outbound validation (reused by the executor).
 - `cmd/migrate/main.go`: golang-migrate migration runner (`SUPABASE_DSN`).
 - `shared/db/migrations/`: Supabase schema migrations (golang-migrate).
 
@@ -334,9 +341,10 @@ api:    tsc clean; vitest 139 passed + 25 skipped (unit); 25 passed (integration
 The legacy Echo v4 HTTP adapter (`internal/adapters/httpapi/`) was removed in
 M5; the HTTP surface now lives in `services/api`. Worker outbound handling is
 queue-driven: the API enqueues a `send_message` job and the worker consumes it
-via `internal/adapters/queue` → `internal/service/executor.go` → the per-device
-WhatsMeow sender. Validation lives in `internal/service/outbound.go`
-(`validateOutboundMessage`, reused by the executor).
+via `internal/handlers/channel` (NewConsumer) → `internal/service/whatsapp_executor.go`
+→ the per-device WhatsMeow sender. Validation lives in
+`internal/service/validate.go` (`validateOutboundMessage`, reused by the
+executor).
 
 ## Nexus Dashboard (M1, 2026-08-05)
 
@@ -414,13 +422,13 @@ for terminal status + `result.wa_message_id`.
   logger)` creates the pool, `NewStoreWithPool(pool, table, logger)` wraps a
   shared pool; `Close()` only closes an owned pool. All SQL interpolates
   `s.table`.
-- Updated callers: `store_integration_test.go` (`"jobs"`), `cmd/main.go`
-  (`"jobs"`).
+- Updated callers: `test/integration/store_integration_test.go` (`"jobs"`),
+  `cmd/worker/main.go` (`"jobs"`).
 - Docker migrate step was skipped (daemon down at the time).
 
 ### M14 — dispatcher + executor + two entrypoints
 
-- `internal/core/domain/job.go`: added `SourceJobSerial string` (uuid,
+- `internal/core/entity/job.go`: added `SourceJobSerial string` (uuid,
   `""` = none). **Deviation:** spec said `int64`, but `source_job_serial` is a
   uuid column and `Complete(serial string)` + `job.Serial` are strings — int64
   cannot hold a uuid and would not compile.
@@ -434,9 +442,10 @@ for terminal status + `result.wa_message_id`.
   list omitted `type`/`phone_number_id` (both NOT NULL; `phone_number_id` has
   no default, so that INSERT would fail). Claim SELECT/scan now conditionally
   include `source_job_serial` for the `whatsmeow_jobs` table.
-- `internal/adapters/queue/consumer.go`: `errors.Is(err, ports.ErrDispatched)`
-  → log + `return nil` (row stays `claimed`). `consumer_test.go`: fake
-  `Enqueue` + `TestProcessJobLeavesDispatchedJobClaimed`.
+- `internal/handlers/channel/handler.go`: `NewConsumer` poll loop —
+  `errors.Is(err, ports.ErrDispatched)` → log + `return nil` (row stays
+  `claimed`). Claim semantics are covered by the integration suite in
+  `test/integration/` (`TestSplitClaimSemanticsRealDB`).
 - `internal/service/dispatcher.go` (new): validates send payloads
   (`validateOutboundMessage`), sets `SourceJobSerial = Serial`, Enqueues,
   returns `ports.ErrDispatched`. **Deviation:** spec said `*slog.Logger`; the
@@ -479,13 +488,107 @@ CGO_ENABLED=0 go build ./cmd/...          OK (cmd, cmd/worker, cmd/whatsapp_work
 docker compose build migrate              NOT run — Docker daemon down
 ```
 
+### Worker Hexagonal Cleanup + Test Pyramid — M15 (2026-08-07)
+
+M14's legacy artifacts are deleted and the worker test pyramid is complete:
+unit → functional → real-DB integration, all green.
+
+- **Hexagonal closure (Lane A):** `ports.WebhookForwarder.Forward(ctx, cfg
+  entity.WebhookConfig, payload entity.WebhookPayload) error`; the webhook
+  adapter is config-agnostic (`NewClient()`, no env reads); `NewMessage(logger,
+  provider, forwarder)`; both `cmd/worker` and `cmd/whatsapp_worker` wire
+  `webhook.NewClient()`. The service layer no longer imports any adapter
+  (grep-verified). Retry policy (3 attempts, 200/400/800ms) preserved.
+- **Legacy removal (Lane C):** deleted `cmd/main.go` and
+  `internal/service/executor.go` and its unit test;
+  `.vscode/launch.json` repointed at `cmd/whatsapp_worker`; docs swept
+  (`services/worker/AGENTS.md`, `docs/services/worker/{README,configuration}.md`).
+  The old `JobExecutor`/`NewJobExecutor` dead code is gone.
+- **Unit/functional tests (Lanes B + D):** 13 JobExecutor tests re-homed onto
+  `WhatsAppExecutor`, 6 write-back tests, 6 Dispatcher tests, 3 functional
+  split-flow tests (`split_flow_test.go`, package `service_test`, mutex-guarded
+  in-memory `fakeJobStore`, race-clean over 15+ runs); test doubles
+  consolidated in `fakes_test.go`; `vcard_test.go`,
+  `core/entity/outbound_test.go` added.
+- **Integration tests (Lane E):** `test/integration/split_integration_test.go`
+  — dispatch + write-back flows against a real Postgres
+  (`TEST_DATABASE_URL`-gated, mirrors the existing store/session integration
+  conventions). Confirms claim increments `attempts` and the `jobs` (no
+  `source_job_serial`) vs `whatsmeow_jobs` (has it) split.
+- **Production fixes surfaced by the tests:**
+  - `vcard.go`: `card.SetValue(vcard.FieldVersion, "3.0")` — the encoder
+    hard-errors when VERSION is missing.
+  - `dispatcher.go`: nil-guard ("dispatcher: dispatch store is nil").
+  - `store.go`: `Enqueue` is now table-aware like `Claim` —
+    `enqueueSourceFragments()` appends the `source_job_serial` column +
+    placeholder only for `whatsmeow_jobs`. Latent bug: the hardcoded 8-column
+    INSERT always referenced `source_job_serial`, which the `jobs` table lacks
+    (exposed by the real-DB integration run; never reached in prod because the
+    API inserts `jobs` rows via PostgREST).
+- **Docs:** `docs/services/worker/README.md` + `configuration.md` updated for
+  the two-binary layout; `AGENTS.md` layout section updated.
+
+### Verification (M15)
+
+```text
+gofmt -l .                               clean (no output)
+go vet ./...                             clean
+go test ./... -count=1                   127 passed (13 packages)
+CGO_ENABLED=0 go build ./cmd/...         OK (worker, whatsapp_worker, migrate)
+go test -race ./internal/service \
+  ./internal/adapters/queue              68 passed (2 packages)
+
+Real-DB integration (throwaway waba-it-postgres on :5433, torn down after):
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5433/waba?sslmode=disable \
+  go test ./internal/adapters/queue -count=1 -v
+  → 24 passed / 24 — TestSplitDispatchContract, TestSplitWriteBackContract
+    (success + terminal failure), TestSplitClaimSemantics, TestStoreIntegration,
+    TestSessionStoreIntegration (no skips, no failures)
+```
+
 ### Pending
 
-- e2e against the compose stack (requires Docker): confirm
-  API → jobs → worker → whatsmeow_jobs → whatsapp_worker → WhatsMeow → jobs
-  write-back, then delete `cmd/main.go` + `internal/service/executor.go` in the
-  same commit and update this file.
-- Commit the M13 + M14 work (per repo milestone rules, reference M13/M14 in the
-  commit message).
+- e2e against the compose stack with a **live WhatsApp account** (requires
+  Docker + real pairing): confirms the full API → jobs → worker →
+  whatsmeow_jobs → whatsapp_worker → WhatsMeow → jobs write-back chain end to
+  end. The split itself is already covered by functional tests
+  (`split_flow_test.go`) and the real-Postgres integration suite
+  (`split_integration_test.go`); only the live-WhatsApp leg remains unverified
+  because it needs an actual device to pair.
+- Commit the M15 work (per repo milestone rules, reference M15 in the commit
+  message). M13 (`52220d1`) and M14 (`b6c8006`) are already committed.
+
+## M16 — Skill-Compliance Restructure (2026-08-07)
+
+M16 restructured `services/worker` to the test pyramid and layering defined by
+the user's skills (`unit-test` / `functional-test` / `integration-test` /
+`hexagonal-architecture`):
+
+- **Test pyramid (per the skills):**
+  - *Unit* tests target pure functions only: `internal/core/entity/*_test.go`,
+    `internal/adapters/*/dto/mapper_test.go`,
+    `internal/handlers/whatsapp/dto/mapper_test.go`,
+    `internal/service/validate_test.go`.
+  - *Functional* tests cover `internal/service/*_test.go` with mocked ports,
+    a hermetic sleeper injection, and no adapter imports.
+  - *Integration* suites moved to `test/integration/` behind
+    `//go:build integration`: WireMock suites (webhook forward + apiconfig;
+    golden files under `testdata/golden/`, `-update` flag regenerates them)
+    and real-Postgres `-run RealDB` suites (gated on `TEST_DATABASE_URL`).
+- **New layers:** `internal/handlers/channel/` (queue consumer:
+  `NewConsumer` / `Run` / `processJob`) and `internal/handlers/whatsapp/`
+  (inbound event handler). The whatsapp handler is constructed in
+  `cmd/whatsapp_worker/main.go` and injected into `DeviceManager` via
+  `EventHandlerFactory` — M16 finding-1 fix.
+- **Deleted:** the whatsmeow event-translation handler, the queue consumer
+  (with its unit test), `session_store_test.go`, and the old adapter-level
+  unit/integration tests.
+- **Renames:** the `domain` package was renamed `entity` — the inbound-event
+  model is now `entity.InboundEvent`. `DefaultMaxAttempts` lives in
+  `internal/core/entity/outcome.go`; `webhookForwardAttempts` = 4 in
+  `internal/service/message.go` (adjudicated correct).
+- **Verification:** `go test ./...` = 168 passed / 18 packages / 0 FAIL;
+  `go test -race` = 61 PASS; WireMock = 5 PASS; RealDB = 16 PASS; oracle
+  Gate 2 review = PASS.
 
 

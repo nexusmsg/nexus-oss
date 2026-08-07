@@ -1,5 +1,18 @@
 # waba-api-unofficial (Turborepo Monorepo)
 
+> **DEPRECATION NOTICE (2026-08-07) — repo rules are deprecated; skills govern.**
+> The prescriptive rules in this file and the component `AGENTS.md` files are
+> deprecated. Judge architecture and test work against the user's skills
+> (loaded from `~/.config/opencode/opencode-skills`) instead:
+>
+> - **Architecture / layering:** `hexagonal-architecture`
+> - **Test discipline:** `unit-test`, `functional-test`, `integration-test`
+> - **Workflow / planning / verification:** `deepwork`, `verification-planning`
+>
+> Sections below remain as **factual reference** (layout, commands, current
+> state). Where a section states a *rule*, the rule is deprecated and the skill
+> takes precedence.
+
 This repository is a Turborepo monorepo with three component areas:
 
 - `apps/` — UI & frontend (placeholder for now; `.gitkeep` only).
@@ -16,13 +29,15 @@ This repository is a Turborepo monorepo with three component areas:
   task in every package through Turborepo. The Go worker participates via its
   npm scripts (`go build`, `go run`, `go test`).
 
-## Go Worker Rules
+## Go Worker Rules (DEPRECATED)
 
-For anything inside `services/worker/`, follow `services/worker/AGENTS.md`: it
-defines the layered architecture (domain → ports → service → adapters), the
-WhatsMeow → WABA mapping rules, and the verification requirements. Run
-`gofmt`, `go test ./...`, and `go vet ./...` from `services/worker/` before
-handoff.
+> Deprecated rule section. Layering and test standards come from the skills:
+> `hexagonal-architecture`, `unit-test`, `functional-test`, `integration-test`.
+
+`services/worker/AGENTS.md` describes the current worker layout and contracts —
+factual reference only; its prescriptive rules are deprecated. Run `gofmt`,
+`go test ./...`, and `go vet ./...` from `services/worker/` before handoff as
+ordinary hygiene, and choose test levels per the test skills.
 
 ## Component-Level AGENTS.md
 
@@ -47,29 +62,16 @@ that area:
   `docs/services/<name>/`, plus `docs/shared/`, `docs/apps/`, and
   `docs/architecture/`.
 
-## Planning and Milestones
+## Planning and Milestones (DEPRECATED)
 
-- Break large plans into explicit milestones (M1, M2, ...) before writing any
-  code. Each milestone must be independently verifiable and shippable; never
-  implement a large plan in one pass.
-- Work one milestone at a time: complete, verify, and close it before starting
-  the next. New milestones are gated on the previous one's verification
-  passing.
-- Record milestone status in `.opencode/plans/split-architecture.md` (mark
-  `(Completed)` and append verification evidence) and reference the milestone
-  in commit messages, e.g. `feat: ... (M9)`.
-- Every plan or milestone that changes code must include a documentation
-  update: extend the matching section docs under `docs/` (routes, config,
-  architecture, migrations, flows) in the same milestone, and keep the index
-  links in `docs/README.md` / `docs/services/README.md` accurate.
+> Deprecated rule section. Planning, milestones, review gates, and progress
+> tracking are governed by the `deepwork` skill; verification and evidence
+> paths by `verification-planning`. `.opencode/plans/split-architecture.md`
+> and `HANDOFF.md` remain as the historical working record.
 
-## Handoff Logging
+## Handoff Logging (DEPRECATED)
 
-- Keep `HANDOFF.md` current as work progresses, not only at the end: update it
-  whenever a milestone (or significant chunk) lands.
-- Log what changed, what was verified (with evidence), open/blocked items, and
-  the latest milestone/commit.
-- Before finishing a session, refresh the handoff so the next agent can pick up
-  without re-discovering context — including environment notes that bite later
-  (e.g. migrations are baked into Docker images, so `docker compose build
-  migrate` is required before `up -d` after new migration files).
+> Deprecated rule section. Keeping the working record current is part of the
+> `deepwork` workflow (persistent progress tracking) and `reflect`
+> (retrospective); the mechanics of updating `HANDOFF.md` are repository
+> convention, not governing rules.

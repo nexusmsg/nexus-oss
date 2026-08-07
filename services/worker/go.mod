@@ -3,10 +3,13 @@ module github.com/afikrim/waba-api-unofficial
 go 1.26.3
 
 require (
+	github.com/caarlos0/env/v11 v11.4.1
 	github.com/emersion/go-vcard v0.0.0-20260618161152-d854b7e0e2d3
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.5.4
+	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3
+	github.com/wiremock/go-wiremock v1.16.0
 	go.mau.fi/whatsmeow v0.0.0-20260730092514-662ad1dc6900
 	google.golang.org/protobuf v1.36.11
 )

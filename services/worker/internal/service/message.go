@@ -7,26 +7,50 @@ import (
 	"log"
 	"time"
 
-	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
-	"github.com/afikrim/waba-api-unofficial/internal/core/domain"
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 )
 
+// sleepFunc applies a delay between forward retry attempts, returning ctx.Err()
+// when the context is canceled before the delay completes.
+type sleepFunc func(ctx context.Context, d time.Duration) error
+
+// defaultSleep is the production sleeper: a context-aware real-clock wait.
+var defaultSleep sleepFunc = func(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
+
 type Message struct {
-	logger   *log.Logger
-	provider ports.WebhookConfigProvider
+	logger    *log.Logger
+	provider  ports.WebhookConfigProvider
+	forwarder ports.WebhookForwarder
+	sleep     sleepFunc
 }
 
 var _ ports.MessageService = (*Message)(nil)
 
-func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider) *Message {
+func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider, forwarder ports.WebhookForwarder) *Message {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Message{logger: logger, provider: provider}
+	return &Message{logger: logger, provider: provider, forwarder: forwarder, sleep: defaultSleep}
 }
 
-func (s *Message) Inbound(ctx context.Context, event *domain.InboundEvent) error {
+// WithSleep replaces the inter-retry sleeper (default: real clock). Tests
+// inject a recording sleeper to assert the backoff sequence hermetically.
+func (m *Message) WithSleep(sleep sleepFunc) *Message {
+	if sleep != nil {
+		m.sleep = sleep
+	}
+	return m
+}
+
+func (s *Message) Inbound(ctx context.Context, event *entity.InboundEvent) error {
 	if event == nil {
 		return fmt.Errorf("inbound event is nil")
 	}
@@ -34,23 +58,23 @@ func (s *Message) Inbound(ctx context.Context, event *domain.InboundEvent) error
 		return nil
 	}
 
-	payload := domain.WebhookPayload{
+	payload := entity.WebhookPayload{
 		Object: "whatsapp_business_account",
-		Entry: []domain.Entry{{
+		Entry: []entity.Entry{{
 			ID: event.BusinessAccountID,
-			Changes: []domain.Change{{
+			Changes: []entity.Change{{
 				Field: "messages",
-				Value: domain.Value{
+				Value: entity.Value{
 					MessagingProduct: "whatsapp",
-					Metadata: domain.Metadata{
+					Metadata: entity.Metadata{
 						DisplayPhoneNumber: event.DisplayPhoneNumber,
 						PhoneNumberID:      event.PhoneNumberID,
 					},
-					Contacts: []domain.Contact{{
-						Profile: domain.Profile{Name: event.ProfileName},
+					Contacts: []entity.Contact{{
+						Profile: entity.Profile{Name: event.ProfileName},
 						WaID:    event.WhatsAppID,
 					}},
-					Messages: []domain.Message{mapMessage(event.Message)},
+					Messages: []entity.Message{mapMessage(event.Message)},
 				},
 			}},
 		}},
@@ -73,30 +97,37 @@ func (s *Message) Inbound(ctx context.Context, event *domain.InboundEvent) error
 		s.logger.Printf("webhook not configured for phone number %q; skipping forward", event.PhoneNumberID)
 		return nil
 	}
-	if err := forwardWebhookWithRetry(ctx, cfg, payload); err != nil {
+	if s.forwarder == nil {
+		return fmt.Errorf("webhook forwarder is nil")
+	}
+	if err := s.forwardWebhookWithRetry(ctx, s.forwarder, cfg, payload); err != nil {
 		return fmt.Errorf("forward inbound WABA webhook: %w", err)
 	}
 	return nil
 }
 
-const webhookForwardAttempts = 3
+// webhookForwardAttempts is the total number of forward attempts: the initial
+// attempt plus one retry per entry in webhookForwardBackoffs.
+const webhookForwardAttempts = 4
 
 var webhookForwardBackoffs = []time.Duration{200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond}
 
-// forwardWebhookWithRetry forwards the payload through a per-call webhook
-// client, retrying transient failures with bounded exponential backoff.
-func forwardWebhookWithRetry(ctx context.Context, cfg domain.WebhookConfig, payload domain.WebhookPayload) error {
-	client := webhook.NewClient(cfg.URL, cfg.Secret)
+// forwardWebhookWithRetry forwards the payload through the injected
+// forwarder, retrying transient failures with bounded exponential backoff
+// applied through the injected sleeper (real clock in production).
+func (s *Message) forwardWebhookWithRetry(ctx context.Context, forwarder ports.WebhookForwarder, cfg entity.WebhookConfig, payload entity.WebhookPayload) error {
+	sleep := s.sleep
+	if sleep == nil {
+		sleep = defaultSleep
+	}
 	var lastErr error
 	for attempt := 0; attempt < webhookForwardAttempts; attempt++ {
 		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(webhookForwardBackoffs[attempt-1]):
+			if err := sleep(ctx, webhookForwardBackoffs[attempt-1]); err != nil {
+				return err
 			}
 		}
-		lastErr = client.Forward(ctx, payload)
+		lastErr = forwarder.Forward(ctx, cfg, payload)
 		if lastErr == nil {
 			return nil
 		}
@@ -104,8 +135,8 @@ func forwardWebhookWithRetry(ctx context.Context, cfg domain.WebhookConfig, payl
 	return lastErr
 }
 
-func mapMessage(message domain.MessageEvent) domain.Message {
-	result := domain.Message{
+func mapMessage(message entity.MessageEvent) entity.Message {
+	result := entity.Message{
 		From:      message.From,
 		ID:        message.ID,
 		Timestamp: message.Timestamp,
@@ -113,52 +144,52 @@ func mapMessage(message domain.MessageEvent) domain.Message {
 	}
 
 	switch message.Type {
-	case domain.MessageEventTypeText:
-		result.Text = &domain.Text{Body: message.Text}
-	case domain.MessageEventTypeLocation:
+	case entity.MessageEventTypeText:
+		result.Text = &entity.Text{Body: message.Text}
+	case entity.MessageEventTypeLocation:
 		if message.Location != nil {
-			result.Location = &domain.Location{
+			result.Location = &entity.Location{
 				Latitude:  message.Location.Latitude,
 				Longitude: message.Location.Longitude,
 				Name:      message.Location.Name,
 				Address:   message.Location.Address,
 			}
 		}
-	case domain.MessageEventTypeReaction:
+	case entity.MessageEventTypeReaction:
 		if message.Reaction != nil {
-			result.Reaction = &domain.Reaction{
+			result.Reaction = &entity.Reaction{
 				MessageID: message.Reaction.MessageID,
 				Emoji:     message.Reaction.Emoji,
 			}
 		}
-	case domain.MessageEventTypeInteractive:
+	case entity.MessageEventTypeInteractive:
 		if message.Interactive != nil {
-			result.Interactive = &domain.Interactive{
+			result.Interactive = &entity.Interactive{
 				Type: message.Interactive.Type,
 			}
 			if message.Interactive.ButtonReply != nil {
-				result.Interactive.ButtonReply = &domain.ButtonReply{
+				result.Interactive.ButtonReply = &entity.ButtonReply{
 					ID:    message.Interactive.ButtonReply.ID,
 					Title: message.Interactive.ButtonReply.Title,
 				}
 			}
 			if message.Interactive.ListReply != nil {
-				result.Interactive.ListReply = &domain.ListReply{
+				result.Interactive.ListReply = &entity.ListReply{
 					ID:          message.Interactive.ListReply.ID,
 					Title:       message.Interactive.ListReply.Title,
 					Description: message.Interactive.ListReply.Description,
 				}
 			}
 		}
-	case domain.MessageEventTypeContacts:
-		contacts := make([]domain.ContactObject, 0, len(message.Contacts))
+	case entity.MessageEventTypeContacts:
+		contacts := make([]entity.ContactObject, 0, len(message.Contacts))
 		for _, c := range message.Contacts {
 			contacts = append(contacts, mapContactEvent(c))
 		}
 		result.Contacts = contacts
-	case domain.MessageEventTypeSystem:
+	case entity.MessageEventTypeSystem:
 		if message.System != nil {
-			result.System = &domain.SystemMessage{
+			result.System = &entity.SystemMessage{
 				Body: message.System.Body,
 				WaID: message.System.WaID,
 				Type: message.System.Type,
@@ -167,7 +198,7 @@ func mapMessage(message domain.MessageEvent) domain.Message {
 	}
 
 	if message.Context != nil {
-		result.Context = &domain.MessageContext{
+		result.Context = &entity.MessageContext{
 			ID:   message.Context.ID,
 			From: message.Context.From,
 		}
@@ -176,10 +207,10 @@ func mapMessage(message domain.MessageEvent) domain.Message {
 	return result
 }
 
-func mapContactEvent(c domain.ContactEvent) domain.ContactObject {
-	obj := domain.ContactObject{
+func mapContactEvent(c entity.ContactEvent) entity.ContactObject {
+	obj := entity.ContactObject{
 		Birthday: c.Birthday,
-		Name: domain.NameObject{
+		Name: entity.NameObject{
 			FormattedName: c.Name.FormattedName,
 			FirstName:     c.Name.FirstName,
 			LastName:      c.Name.LastName,
@@ -187,27 +218,27 @@ func mapContactEvent(c domain.ContactEvent) domain.ContactObject {
 			Prefix:        c.Name.Prefix,
 			Suffix:        c.Name.Suffix,
 		},
-		Org: domain.OrgObject{
+		Org: entity.OrgObject{
 			Company:    c.Org.Company,
 			Department: c.Org.Department,
 			Title:      c.Org.Title,
 		},
 	}
 	for _, p := range c.Phones {
-		obj.Phones = append(obj.Phones, domain.PhoneObject{
+		obj.Phones = append(obj.Phones, entity.PhoneObject{
 			Phone: p.Phone,
 			Type:  p.Type,
 			WaID:  p.WaID,
 		})
 	}
 	for _, e := range c.Emails {
-		obj.Emails = append(obj.Emails, domain.EmailObject{
+		obj.Emails = append(obj.Emails, entity.EmailObject{
 			Email: e.Email,
 			Type:  e.Type,
 		})
 	}
 	for _, a := range c.Addresses {
-		obj.Addresses = append(obj.Addresses, domain.AddressObject{
+		obj.Addresses = append(obj.Addresses, entity.AddressObject{
 			Street:      a.Street,
 			City:        a.City,
 			State:       a.State,
@@ -217,7 +248,7 @@ func mapContactEvent(c domain.ContactEvent) domain.ContactObject {
 		})
 	}
 	for _, u := range c.URLs {
-		obj.URLs = append(obj.URLs, domain.URLObject{
+		obj.URLs = append(obj.URLs, entity.URLObject{
 			URL:  u.URL,
 			Type: u.Type,
 		})
