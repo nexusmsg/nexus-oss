@@ -47,6 +47,25 @@ where phone_number_id = $1 and deleted_at is null`, phoneNumberID, status)
 	return nil
 }
 
+// MarkConnected records a successful device connection: status connected, the
+// WhatsApp account ID when known, and connected_at. An empty whatsappID keeps
+// the existing value (e.g. on a plain reconnect).
+func (s *SessionStore) MarkConnected(ctx context.Context, phoneNumberID, whatsappID string) error {
+	tag, err := s.pool.Exec(ctx, `
+update sessions
+set status = $2,
+    whatsapp_id = case when $3 <> '' then $3 else whatsapp_id end,
+    connected_at = now()
+where phone_number_id = $1 and deleted_at is null`, phoneNumberID, entity.SessionStatusConnected, whatsappID)
+	if err != nil {
+		return fmt.Errorf("session store: mark connected for %q: %w", phoneNumberID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("session store: no session for phone number %q", phoneNumberID)
+	}
+	return nil
+}
+
 func (s *SessionStore) UpdateHeartbeats(ctx context.Context, phoneNumberIDs []string) error {
 	if len(phoneNumberIDs) == 0 {
 		return nil

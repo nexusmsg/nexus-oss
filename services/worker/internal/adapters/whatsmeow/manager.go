@@ -33,6 +33,7 @@ type DeviceManager struct {
 
 	container      *sqlstore.Container
 	messageService ports.MessageService
+	sessionStore   ports.SessionStore
 	fallbackBAID   string
 	handlerFactory EventHandlerFactory
 	logger         *log.Logger
@@ -42,8 +43,10 @@ var _ ports.DeviceManager = (*DeviceManager)(nil)
 var _ ports.OutboundSenderProvider = (*DeviceManager)(nil)
 
 // NewDeviceManager builds a manager. Every mutation is serialized by the
-// manager's mutex, so no manager goroutine is needed.
-func NewDeviceManager(container *sqlstore.Container, messageService ports.MessageService, fallbackBusinessAccountID string, handlerFactory EventHandlerFactory, logger *log.Logger) *DeviceManager {
+// manager's mutex, so no manager goroutine is needed. sessionStore records
+// lifecycle status transitions; it may be nil, in which case status recording
+// is skipped.
+func NewDeviceManager(container *sqlstore.Container, messageService ports.MessageService, sessionStore ports.SessionStore, fallbackBusinessAccountID string, handlerFactory EventHandlerFactory, logger *log.Logger) *DeviceManager {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -52,6 +55,7 @@ func NewDeviceManager(container *sqlstore.Container, messageService ports.Messag
 		numbers:        make(map[string]string),
 		container:      container,
 		messageService: messageService,
+		sessionStore:   sessionStore,
 		fallbackBAID:   fallbackBusinessAccountID,
 		handlerFactory: handlerFactory,
 		logger:         logger,
@@ -95,6 +99,7 @@ func (m *DeviceManager) EnsureDevice(ctx context.Context, session entity.Session
 	}
 	handler := m.handlerFactory(m.messageService, baid, session.PhoneNumberID, displayPhone, m.logger)
 	client.AddEventHandler(handler(ref.ctx))
+	client.AddEventHandler(m.lifecycleHandler(ref))
 	client.AddEventHandler(m.disconnectedHandler(ref))
 
 	m.devices[session.PhoneNumberID] = ref
@@ -208,6 +213,80 @@ func (m *DeviceManager) disconnectedHandler(ref *deviceRef) func(any) {
 		ref.connectPending.Store(true)
 		ref.wakeup()
 	}
+}
+
+// lifecycleHandler records session status transitions from whatsmeow lifecycle
+// events. It must not block: whatsmeow dispatches it on a goroutine.
+func (m *DeviceManager) lifecycleHandler(ref *deviceRef) func(any) {
+	return func(evt any) {
+		switch e := evt.(type) {
+		case *events.PairSuccess:
+			// The QR code was scanned and the handshake completed: the device
+			// is now a real linked device.
+			m.markConnected(ref, e.ID.String())
+		case *events.Connected:
+			// The QR-phase websocket connects before the device has a stored
+			// session; only an authenticated device (Store.ID set) is really
+			// connected, so boot reconnects and post-pair connects count,
+			// plain QR websockets do not.
+			if !ref.client.hasSession() {
+				return
+			}
+			whatsappID := ""
+			if id := ref.client.client.Store.ID; id != nil {
+				whatsappID = id.String()
+			}
+			m.markConnected(ref, whatsappID)
+		case *events.Disconnected:
+			m.markDisconnected(ref)
+		case *events.LoggedOut:
+			m.markLoggedOut(ref)
+		}
+	}
+}
+
+// markConnected records the session as connected. It runs on whatsmeow's event
+// goroutine and never blocks on anything but the session store write.
+func (m *DeviceManager) markConnected(ref *deviceRef, whatsappID string) {
+	if m.sessionStore == nil {
+		return
+	}
+	if err := m.sessionStore.MarkConnected(context.Background(), ref.phoneNumberID, whatsappID); err != nil {
+		m.logger.Printf("whatsmeow: mark device %s connected: %v", ref.phoneNumberID, err)
+	}
+}
+
+// markDisconnected records the session as disconnected, but only when it was
+// connected: a terminal state (logged_out) or a pairing/created state must not
+// be clobbered by the socket close that follows a logout or failed pairing.
+func (m *DeviceManager) markDisconnected(ref *deviceRef) {
+	if m.sessionStore == nil {
+		return
+	}
+	ctx := context.Background()
+	session, err := m.sessionStore.GetByPhoneNumberID(ctx, ref.phoneNumberID)
+	if err != nil {
+		m.logger.Printf("whatsmeow: load session %s on disconnect: %v", ref.phoneNumberID, err)
+		return
+	}
+	if session == nil || session.Status != entity.SessionStatusConnected {
+		return
+	}
+	if err := m.sessionStore.UpdateStatus(ctx, ref.phoneNumberID, entity.SessionStatusDisconnected); err != nil {
+		m.logger.Printf("whatsmeow: mark device %s disconnected: %v", ref.phoneNumberID, err)
+	}
+}
+
+// markLoggedOut records that the device was unpaired remotely (from the phone).
+// Client-initiated logouts are recorded by the executor instead.
+func (m *DeviceManager) markLoggedOut(ref *deviceRef) {
+	if m.sessionStore == nil {
+		return
+	}
+	if err := m.sessionStore.UpdateStatus(context.Background(), ref.phoneNumberID, entity.SessionStatusLoggedOut); err != nil {
+		m.logger.Printf("whatsmeow: mark device %s logged out: %v", ref.phoneNumberID, err)
+	}
+	m.logger.Printf("whatsmeow: device %s logged out remotely", ref.phoneNumberID)
 }
 
 // removeDevice removes a device and its reverse index entry. It is called by

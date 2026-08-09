@@ -11,6 +11,9 @@ import (
 type SessionStore interface {
 	// UpdateStatus updates the session status by phone_number_id.
 	UpdateStatus(ctx context.Context, phoneNumberID string, status string) error
+	// MarkConnected records a successful device connection: status connected,
+	// the WhatsApp account ID when known, and connected_at.
+	MarkConnected(ctx context.Context, phoneNumberID string, whatsappID string) error
 	// UpdateHeartbeats refreshes last_seen_at for the given phone number IDs.
 	// Missing or already-deleted sessions are tolerated.
 	UpdateHeartbeats(ctx context.Context, phoneNumberIDs []string) error

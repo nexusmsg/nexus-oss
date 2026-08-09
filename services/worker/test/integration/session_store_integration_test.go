@@ -216,6 +216,66 @@ func TestSessionStoreIntegrationRealDB(t *testing.T) {
 			t.Errorf("last_seen_at not refreshed: hb-1 recent=%v, hb-2 recent=%v", recent1, recent2)
 		}
 	})
+	t.Run("mark connected sets status, whatsapp id and connected_at", func(t *testing.T) {
+		clean := func() {
+			if _, err := pool.Exec(ctx, "delete from sessions where phone_number_id like $1", prefix+"%"); err != nil {
+				t.Fatalf("cleanup: %v", err)
+			}
+		}
+
+		clean()
+		insertSession(t, ctx, pool, prefix+"conn", "628000000020", "", "created")
+
+		if err := store.MarkConnected(ctx, prefix+"conn", "628000000020@s.whatsapp.net"); err != nil {
+			t.Fatalf("MarkConnected() error = %v", err)
+		}
+
+		var status, whatsappID string
+		var connectedAt *time.Time
+		if err := pool.QueryRow(ctx, `
+			select status, whatsapp_id, connected_at
+			from sessions where phone_number_id = $1`, prefix+"conn").Scan(&status, &whatsappID, &connectedAt); err != nil {
+			t.Fatalf("read session: %v", err)
+		}
+		if status != entity.SessionStatusConnected {
+			t.Errorf("status = %q, want connected", status)
+		}
+		if whatsappID != "628000000020@s.whatsapp.net" {
+			t.Errorf("whatsapp_id = %q, want account JID", whatsappID)
+		}
+		if connectedAt == nil {
+			t.Error("connected_at = nil, want set")
+		}
+	})
+
+	t.Run("mark connected keeps existing whatsapp id on reconnect", func(t *testing.T) {
+		clean := func() {
+			if _, err := pool.Exec(ctx, "delete from sessions where phone_number_id like $1", prefix+"%"); err != nil {
+				t.Fatalf("cleanup: %v", err)
+			}
+		}
+
+		clean()
+		insertSession(t, ctx, pool, prefix+"reconn", "628000000021", "", "created")
+		if _, err := pool.Exec(ctx, `
+			update sessions set whatsapp_id = '628000000021@s.whatsapp.net'
+			where phone_number_id = $1`, prefix+"reconn"); err != nil {
+			t.Fatalf("pre-set whatsapp_id: %v", err)
+		}
+
+		if err := store.MarkConnected(ctx, prefix+"reconn", ""); err != nil {
+			t.Fatalf("MarkConnected() error = %v", err)
+		}
+
+		var whatsappID string
+		if err := pool.QueryRow(ctx, `
+			select whatsapp_id from sessions where phone_number_id = $1`, prefix+"reconn").Scan(&whatsappID); err != nil {
+			t.Fatalf("read session: %v", err)
+		}
+		if whatsappID != "628000000021@s.whatsapp.net" {
+			t.Errorf("whatsapp_id = %q, want preserved on empty reconnect", whatsappID)
+		}
+	})
 }
 
 func insertSession(t *testing.T, ctx context.Context, pool *pgxpool.Pool, phoneNumberID, number, businessAccountID, status string) {

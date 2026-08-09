@@ -70,7 +70,7 @@ func main() {
 		return whatsapp.NewHandler(messageService, businessAccountID, phoneNumberID, displayPhone, logger).Handle
 	}
 
-	manager := whatsmeow.NewDeviceManager(container, svc, cfg.BusinessAccountID, handlerFactory, log.Default())
+	manager := whatsmeow.NewDeviceManager(container, svc, sessionStore, cfg.BusinessAccountID, handlerFactory, log.Default())
 	heartbeat := queue.NewHeartbeat(sessionStore, manager, cfg.HeartbeatInterval, log.Default())
 
 	// Boot sync: provision a device per stored session. Partial failures must

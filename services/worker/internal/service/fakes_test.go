@@ -49,21 +49,29 @@ func (s *recordingSender) Send(_ context.Context, message entity.OutboundMessage
 
 // fakeSessionStore is an in-memory ports.SessionStore for hermetic tests.
 type fakeSessionStore struct {
-	sessions map[string]*entity.Session
-	statuses map[string]string
-	qrCodes  map[string]string
+	sessions    map[string]*entity.Session
+	statuses    map[string]string
+	whatsappIDs map[string]string
+	qrCodes     map[string]string
 }
 
 func newFakeSessionStore() *fakeSessionStore {
 	return &fakeSessionStore{
-		sessions: map[string]*entity.Session{},
-		statuses: map[string]string{},
-		qrCodes:  map[string]string{},
+		sessions:    map[string]*entity.Session{},
+		statuses:    map[string]string{},
+		whatsappIDs: map[string]string{},
+		qrCodes:     map[string]string{},
 	}
 }
 
 func (s *fakeSessionStore) UpdateStatus(_ context.Context, phoneNumberID, status string) error {
 	s.statuses[phoneNumberID] = status
+	return nil
+}
+
+func (s *fakeSessionStore) MarkConnected(_ context.Context, phoneNumberID, whatsappID string) error {
+	s.statuses[phoneNumberID] = entity.SessionStatusConnected
+	s.whatsappIDs[phoneNumberID] = whatsappID
 	return nil
 }
 
