@@ -10,30 +10,51 @@ Path: `apps/`
 
 ### Dashboard — `apps/dashboard/` (`@waba/dashboard`)
 
-The **Nexus developer portal**: React + Vite + TypeScript SPA that consumes the
-Hono API under `../services/api/` over HTTP. Serves as the admin surface for
-WhatsApp device sessions (QR pairing), webhook configs, and API keys.
+The **Nexus developer portal**: Next.js 16 + Tailwind CSS v4 dark dashboard app.
+Serves as the admin surface for WhatsApp device sessions (QR pairing), webhook
+configs, and API keys.
 
-- Entry point: `src/main.tsx` → `src/app/App.tsx` (react-router, root `/`
-  redirects to `/sessions`).
-- Design source: exported HTML under `design/dashboard/` (DESIGN-HANDOFF.md is
-  the visual contract); design tokens live in `src/styles/tokens.css`.
-- Routes: `/sessions` (device grid, two-stage add-device modal → QR pairing,
-  status polling), `/webhooks` (config CRUD + subscriptions, delivery-log
-  empty state), `/api-keys` (frontend-first, empty state — backend is B1).
-  Nav items Dashboard/Jobs/Settings render disabled ("coming soon").
-- Auth: env `VITE_API_TOKEN` → `Authorization: Bearer`; without it, a
-  browser-side Basic Auth gate (password = API `API_AUTH_TOKEN`), credentials
-  cached in sessionStorage. The API accepts both schemes and answers CORS
-  (`CORS_ORIGINS`); see `../services/api/configuration.md`.
-- API usage: `/api/v1/sessions*` (create, list, get, pairing, pairing/qr,
-  logout, status) and `/api/v1/webhooks*` (list, get, create, patch, delete,
-  subscriptions). Typed client in `src/api/`.
-- Env: `.env.example` documents `VITE_API_URL` (default
-  `http://localhost:3000`) and `VITE_API_TOKEN` (unset → Basic Auth mode).
-- Toolchain: ESLint flat config + `eslint-plugin-react-hooks` +
-  `eslint-plugin-react-refresh`; vitest + `@testing-library/react`.
-- Tracked backend gaps: API keys backend (B1), session delete/disconnect (B2),
-  delivery log (B3), webhook verification (B4), full login screen (B5),
-  webhook test-delivery (B6), launcher route (B7) — see
-  `.opencode/plans/dashboard.md`.
+- **Framework**: Next.js 16.3.0 (App Router, Turbopack)
+- **Styling**: Tailwind CSS v4.3.3 with design tokens via `@theme` in `globals.css`
+- **Design source**: `design/dashboard/*.html` (9 Nexus dark theme screens, identical `:root` token block)
+- **Entry**: `src/app/layout.tsx` → `src/app/page.tsx` (playground/verification page)
+- **Components**: `src/components/` — 19 components + icons + barrel export
+- **Fonts**: Inter + JetBrains Mono via `next/font/google`
+- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API, 3001 = PostgREST)
+- **Icons**: Hand-ported SVG set at `src/components/icons/index.tsx` (do NOT add lucide-react)
+
+#### Design Tokens
+
+All tokens defined in `src/app/globals.css` via `@theme` block:
+
+- **Colors**: canvas (#0c0d0e), surface (#15171a), elevated (#1a1d21), hover (#1e2126), fg (#e8eaed), muted (#7a7e85), line (#262a2f), accent/success (#34d399), info (#60a5fa), warning (#fbbf24), danger (#f87171)
+- **Typography**: 8-step scale (10-28px, base 13px), weights 400/500/600/700, tracking tight/wide/wider
+- **Radius**: sm (4px), md (6px), lg (10px), pill (20px), full (50%)
+- **Motion**: durations fast/normal/slow, pulse keyframe, default easing
+- **Layout**: sidebar 240px, topbar 56px, content padding 24px
+
+#### Component Library
+
+19 components in `src/components/`:
+
+- **Primitives**: Button, Badge, StatusDot, Avatar, Toggle, Tooltip
+- **Layout**: Card, Sidebar, Topbar, Modal
+- **Data**: Table, StatCard, DeviceStatus, APIKeyRow, ExpandableRow
+- **Forms**: FormGroup, FormLabel, FormInput, FormSelect, FormHint, PasswordStrength
+- **Feedback**: Alert, EmptyState, QuickActions
+
+#### Playground Page
+
+Single `/` route serves as verification surface for all components:
+
+- 13 card sections covering all components in all states
+- Interactive demos: modal open/close, toggle, API key reveal/copy, expandable rows, form validation, password strength
+- App shell with Sidebar + Topbar for realistic context
+
+#### Current Status
+
+- Phases 1-5 complete: scaffold, tokens, components, playground, verification
+- Build + lint pass across the monorepo (turbo)
+- Verified no horizontal overflow at 360/480/768/1440/1920 viewports
+- Token audit vs design `:root` block: all core tokens match
+- Next: screens phase (dashboard, sessions, webhooks, api-keys, jobs, settings)

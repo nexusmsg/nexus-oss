@@ -1,125 +1,139 @@
-import { NavLink } from "react-router-dom";
-import {
-  IconNexus,
-  IconDashboard,
-  IconKey,
-  IconPhone,
-  IconWebhook,
-  IconJobs,
-  IconSettings,
-} from "./icons";
-import type { ReactNode } from "react";
+"use client";
 
-interface NavItemProps {
-  to: string;
+import { cx } from "./cx";
+import { IconNexus } from "./icons";
+import { Badge } from "./Badge";
+import { Avatar } from "./Avatar";
+import { type ReactNode, useState, useEffect } from "react";
+
+interface NavItem {
   icon: ReactNode;
   label: string;
-  badge?: number;
-  disabled?: boolean;
-}
-
-function NavItem({ to, icon, label, badge, disabled }: NavItemProps) {
-  if (disabled) {
-    return (
-      <div className="nav-item" style={{ opacity: 0.4, cursor: "default" }}>
-        {icon}
-        {label}
-        <span
-          className="tooltip-wrapper"
-          style={{ marginLeft: "auto" }}
-        >
-          <span className="tooltip-text">Coming soon</span>
-          <span
-            style={{
-              fontSize: "10px",
-              color: "var(--muted)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            soon
-          </span>
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `nav-item${isActive ? " active" : ""}`
-      }
-    >
-      {icon}
-      {label}
-      {badge !== undefined && (
-        <span className="badge">{badge}</span>
-      )}
-    </NavLink>
-  );
+  href?: string;
+  active?: boolean;
+  count?: number;
 }
 
 interface SidebarProps {
-  open: boolean;
-  onClose: () => void;
+  /** Current nav items. */
+  items: NavItem[];
+  /** User info displayed in footer. */
+  user?: {
+    name: string;
+    role: string;
+    initials: string;
+  };
+  /** Mobile open state — controlled from parent. */
+  open?: boolean;
+  /** Called when mobile overlay/backdrop is clicked. */
+  onClose?: () => void;
+  className?: string;
 }
 
-export function Sidebar({ open, onClose }: SidebarProps) {
-  return (
-    <>
-      {/* Mobile backdrop */}
-      {open && (
-        <div
-          onClick={onClose}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            zIndex: 99,
-          }}
-        />
+export function Sidebar({
+  items,
+  user,
+  open = false,
+  onClose,
+  className,
+}: SidebarProps) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width:768px)");
+    const check = () => setIsMobile(mql.matches);
+    check();
+    mql.addEventListener("change", check);
+    return () => mql.removeEventListener("change", check);
+  }, []);
+
+  // Group items into sections
+  const sections: { title: string; items: NavItem[] }[] = [];
+  let current = { title: "Overview", items: [] as NavItem[] };
+  for (const item of items) {
+    if (item.label === "Sessions" || item.label === "Webhooks") {
+      if (current.items.length > 0) sections.push(current);
+      current = { title: "Manage", items: [] };
+    } else if (item.label === "Jobs" || item.label === "Settings") {
+      if (current.items.length > 0) sections.push(current);
+      current = { title: "Monitor", items: [] };
+    }
+    current.items.push(item);
+  }
+  if (current.items.length > 0) sections.push(current);
+
+  const sidebar = (
+    <aside
+      className={cx(
+        "flex h-full w-[var(--sidebar-w)] flex-col bg-surface border-r border-line",
+        "fixed inset-y-0 left-0 z-100",
+        "max-md:transition-transform max-md:duration-slow",
+        isMobile && !open && "-translate-x-full",
+        isMobile && open && "translate-x-0",
+        className,
       )}
-      <aside className={`sidebar${open ? " open" : ""}`}>
-        <div className="sidebar-header">
-          <span style={{ color: "var(--accent)" }}><IconNexus /></span>
-          <span>Nexus</span>
-        </div>
-        <nav className="sidebar-nav">
-          <div className="nav-section">Overview</div>
-          <NavItem
-            to="/dashboard-placeholder"
-            icon={<IconDashboard />}
-            label="Dashboard"
-            disabled
-          />
+    >
+      {/* Header */}
+      <div className="flex items-center gap-2.5 border-b border-line px-5 py-4">
+        <IconNexus size={22} className="text-accent shrink-0" />
+        <span className="text-lg font-bold tracking-tight">Nexus</span>
+      </div>
 
-          <div className="nav-section">Manage</div>
-          <NavItem to="/api-keys" icon={<IconKey />} label="API Keys" />
-          <NavItem to="/sessions" icon={<IconPhone />} label="Sessions" />
-          <NavItem to="/webhooks" icon={<IconWebhook />} label="Webhooks" />
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
+        {sections.map((section) => (
+          <div key={section.title} className="mb-1">
+            <div className="px-3 pt-3 pb-1.5 text-2xs font-semibold uppercase tracking-wider text-muted">
+              {section.title}
+            </div>
+            {section.items.map((item) => (
+              <a
+                key={item.label}
+                href={item.href || "#"}
+                className={cx(
+                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-fast",
+                  item.active
+                    ? "bg-accent-dim text-accent"
+                    : "text-muted hover:bg-hover hover:text-fg",
+                )}
+              >
+                <span className="shrink-0 [&_svg]:h-4 [&_svg]:w-4">
+                  {item.icon}
+                </span>
+                {item.label}
+                {item.count !== undefined && (
+                  <Badge className="ml-auto">{item.count}</Badge>
+                )}
+              </a>
+            ))}
+          </div>
+        ))}
+      </nav>
 
-          <div className="nav-section">Monitor</div>
-          <NavItem
-            to="/jobs-placeholder"
-            icon={<IconJobs />}
-            label="Jobs"
-            disabled
-          />
-          <NavItem
-            to="/settings-placeholder"
-            icon={<IconSettings />}
-            label="Settings"
-            disabled
-          />
-        </nav>
-        <div className="sidebar-footer">
-          <div className="avatar">AZ</div>
-          <div className="user-info">
-            <div className="user-name">Aziz M.</div>
-            <div className="user-role">Admin</div>
+      {/* Footer */}
+      {user && (
+        <div className="flex items-center gap-2.5 border-t border-line px-4 py-3">
+          <Avatar initials={user.initials} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold">{user.name}</div>
+            <div className="text-2xs text-muted">{user.role}</div>
           </div>
         </div>
-      </aside>
+      )}
+    </aside>
+  );
+
+  return (
+    <>
+      {sidebar}
+      {/* Mobile overlay backdrop */}
+      {isMobile && open && (
+        <div
+          className="fixed inset-0 z-90 bg-scrim"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
     </>
   );
 }

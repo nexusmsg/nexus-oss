@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* ============================================================
+   NEXUS DESIGN TOKENS
+   Dark-only dashboard theme — no `dark:` variant needed.
+
+   Source of truth: design/dashboard/*.html (9 files, identical :root block).
+   primary === success === accent (#34d399) — all aliases of the same hue.
+   Do not invent a distinct "primary" hue.
+   ============================================================ */
+
+@theme {
+  /* ── Colors ── */
+  --color-canvas: #0c0d0e;
+  --color-surface: #15171a;
+  --color-elevated: #1a1d21;
+  --color-hover: #1e2126;
+  --color-fg: #e8eaed;
+  --color-muted: #7a7e85;
+  --color-line: #262a2f;
+  --color-line-light: #1e2126;
+  --color-accent: #34d399;
+  --color-accent-hover: #2abb86;
+  --color-accent-dim: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  --color-info: #60a5fa;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-success: #34d399;
+  --color-glow: rgba(52, 211, 153, 0.4);
+  --color-scrim: rgba(0, 0, 0, 0.6);
+
+  /* ── Typography ── */
+  /* Type scale — design base is 13px, NOT Tailwind's default 14px (text-sm).
+     All values in rem for consistency; px equivalents in comments. */
+  --text-2xs: 0.625rem;     /* 10px — nav section labels, kbd */
+  --text-xs: 0.6875rem;     /* 11px — badges, device labels, table header */
+  --text-sm: 0.75rem;       /* 12px — stat labels, form labels, mono data */
+  --text-base: 0.8125rem;   /* 13px — BODY BASE */
+  --text-md: 0.875rem;      /* 14px — card titles, search input */
+  --text-lg: 0.9375rem;     /* 15px — sidebar header */
+  --text-xl: 1.375rem;      /* 22px — page titles, auth title */
+  --text-2xl: 1.75rem;      /* 28px — stat values */
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --tracking-tight: -0.02em;    /* brand/page titles/stat values */
+  --tracking-wide: 0.05em;      /* uppercase labels/table headings */
+  --tracking-wider: 0.08em;     /* uppercase labels (wider variant) */
+
+  /* ── Radius ── */
+  --radius-sm: 4px;     /* kbd */
+  --radius-md: 6px;     /* controls */
+  --radius-lg: 10px;    /* cards */
+  --radius-pill: 20px;  /* status badges */
+  --radius-full: 50%;   /* avatars, status dots */
+
+  /* ── Shadows ── */
+  /* Design uses tonal surfaces + 1px borders, NOT broad shadows. */
+  --shadow-none: none;
+  --shadow-glow: 0 0 8px rgba(52, 211, 153, 0.4);
+  /* Modal overlay scrim: --color-scrim (defined in Colors above) */
+
+  /* ── Motion ── */
+  --duration-fast: 0.1s;     /* nav/topbar hover */
+  --duration-normal: 0.15s;  /* buttons/cards/inputs */
+  --duration-slow: 0.2s;     /* sidebar transition */
+
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --animate-pulse: pulse 1.5s var(--ease-default) infinite;
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* ── Layout constants ── */
+  --sidebar-w: 240px;
+  --topbar-h: 56px;
+  --content-padding: 24px;
+}
+
+/* Font families resolved at runtime via next/font — must be inline */
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+/* ── Prefers reduced motion ── */
+/* Components should respect this preference.
+   In the components phase, wrap animated elements with:
+   @media (prefers-reduced-motion: reduce) { animation: none; transition: none; }
+   Or use Tailwind's motion-reduce variant: motion-reduce:animate-none */

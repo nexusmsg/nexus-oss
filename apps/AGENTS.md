@@ -2,22 +2,25 @@
 
 ## Project Overview
 
-`apps/` is the UI/frontend area of the monorepo. It is currently a
-placeholder — only `.gitkeep` exists. No framework, build tooling, or
-application code lives here yet.
+`apps/` is the UI/frontend area of the monorepo. Currently contains one app:
 
-## Status
+- **`apps/dashboard/`** — Nexus developer portal (Next.js 16 + Tailwind CSS v4)
 
-- Do not add application code to `apps/` without a concrete feature request.
-- When a frontend lands, it will consume the API surface under
-  `../services/api/` (session management, QR pairing, webhook configs) —
-  document the app and its API usage in `../../docs/apps/README.md`.
+## Dashboard App
 
-## Conventions (once code exists)
+- **Package**: `@waba/dashboard` (Next.js 16.3.0, React 19, TypeScript)
+- **Styling**: Tailwind CSS v4 with design tokens via `@theme` in `globals.css`
+- **Design source**: `design/dashboard/*.html` (9 Nexus dark theme screens)
+- **Entry**: `src/app/layout.tsx` → `src/app/page.tsx` (playground/verification page)
+- **Components**: `src/components/` — 19 components + icons + barrel export
+- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API, 3001 = PostgREST)
+- **Font**: Inter + JetBrains Mono via `next/font/google`
 
-- One app per subdirectory (e.g. `apps/dashboard/`), each with its own
-  `package.json` and workspace name `@waba/<name>`.
+## Conventions
+
+- One app per subdirectory, each with its own `package.json` and workspace name `@waba/<name>`.
 - Root scripts (`npm run dev` / `build` / `test` / `lint`) run every package
   through Turborepo — new apps must participate without breaking the pipeline.
 - User-visible interfaces are owned by the @designer workflow; headless/state
   logic by @fixer. See root `AGENTS.md`.
+- Icons: Do NOT add lucide-react. Hand-ported SVG set at `src/components/icons/index.tsx`.

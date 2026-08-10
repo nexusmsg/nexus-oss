@@ -346,7 +346,36 @@ via `internal/handlers/channel` (NewConsumer) → `internal/service/whatsapp_exe
 `internal/service/validate.go` (`validateOutboundMessage`, reused by the
 executor).
 
-## Nexus Dashboard (M1, 2026-08-05)
+## Nexus Dashboard — Deprecation Notice (2026-08-10)
+
+> **DEPRECATION NOTICE — the dashboard records below are historical.** The
+> original Vite dashboard (React + Vite + TS) described in "Nexus Dashboard
+> (M1)" was **deleted on 2026-08-10**; the dashboard is being rebuilt from the
+> ground up as a Next.js 16 app on top of the newly built design system. The
+> "Components Missing" investigation and "Button icon+label inline fix"
+> sections below are likewise superseded historical records — their fixes
+> already landed in the current design system. The authoritative plan is
+> `.opencode/plans/dashboard.md` (M2 — screens phase). Worker sections at the
+> top of this file remain current; the dashboard sections below are frozen
+> history.
+
+## Nexus Dashboard — Current State (2026-08-10)
+
+Rebuilt from the ground up after the Vite implementation was deleted:
+
+- **Stack**: Next.js 16.3 (App Router, Turbopack) + Tailwind CSS v4 + React 19,
+  dev on port **3002** (`apps/dashboard/package.json`; 3000 = API, 3001 = PostgREST).
+- **Design system (done, verified)**: tokens via `@theme` in
+  `src/app/globals.css` (all core tokens match the design `:root` block), 19
+  components + icons in `src/components/`, verified playground at `/` (no
+  horizontal overflow at 360/480/768/1440/1920). Button icon+label inline fix
+  already applied.
+- **Screens phase (next)**: routes, API client + auth gate, then screens
+  (sessions, webhooks, overview, api-keys, jobs, settings). Milestone **M2**
+  in `.opencode/plans/dashboard.md`.
+- **Not committed yet**: the whole `apps/dashboard/` tree is untracked.
+
+## Nexus Dashboard (M1, 2026-08-05) — HISTORICAL (deleted implementation)
 
 The frontend area now has its first app — the **Nexus developer portal**:
 
@@ -590,5 +619,126 @@ the user's skills (`unit-test` / `functional-test` / `integration-test` /
 - **Verification:** `go test ./...` = 168 passed / 18 packages / 0 FAIL;
   `go test -race` = 61 PASS; WireMock = 5 PASS; RealDB = 16 PASS; oracle
   Gate 2 review = PASS.
+
+## Nexus Dashboard — "Components Missing" Investigation (2026-08-10)
+
+Context: user manually verified the dashboard, reported 4 issues (sidebar/topbar
+layout, button-icon inline, toggle shape, unicode rendering), then reported
+"many components don't appear" and asked to check the designer task. The
+revision dispatch to @designer was **cancelled by the user** — no code changed
+for those 4 issues.
+
+### Root cause of "components don't appear" — WRONG PORT
+
+- Dashboard dev server runs on **port 3002** (`apps/dashboard/package.json`:
+  `dev: "next dev -p 3002"`).
+- **Port 3001 is owned by OrbStack (docker)** and serves PostgREST (the API's
+  swagger/OpenAPI JSON), not the dashboard. Opening `http://localhost:3001/`
+  shows PostgREST JSON — that is why the user saw "no components".
+- **Dashboard URL: `http://localhost:3002/`** — everything renders.
+- `AGENTS.md` (apps section) still says `next dev -p 3001` — **stale**; 3001 is
+  the PostgREST host port per root `HANDOFF.md` / `docker-compose.yml`. Docs
+  should be updated to 3002.
+
+### Verification evidence (agent-browser, live on :3002)
+
+All components render (full body-text extraction): Sidebar, Topbar, Buttons,
+Badges/StatusDots, StatCards, DeviceStatus, QuickActions, Alerts, Form
+Controls, Toggles, API Key Management, Activity Log table, EmptyStates,
+Avatars, Tooltips. No console/`__NEXT_DATA__` errors.
+
+Computed-style/geometry checks (window 577px tall):
+
+- Sidebar: `position: fixed`, top 0 → bottom 577 (= full viewport), width 240.
+  Topbar: `sticky`, left 240, gap sidebar→topbar = **0** → the "sidebar
+  terpisah / tidak sampai bawah" issue is **not present** in current code.
+- Toggles (3 found): 40×22, `border-radius: 11px` — exactly the
+  `design/dashboard/settings.html` geometry (`.toggle-slider` radius 11px) →
+  the "oval bukan pil" issue is **not present**; current shape matches the
+  design contract.
+- Icon buttons: `display: flex`, `align-items: center`, `gap: 6px`, SVG
+  vertically centered → "icon tidak inline" **not present**.
+- Unicode: `—` (webhook table, `POST /hooks/inbound — timeout`) and `•` masks
+  (`nx_live_••••…`) render as real glyphs in the browser. Note: the earlier
+  hypothesis that `\u2014` in JSX text renders literally was **wrong** — JSX
+  text children DO decode `\uXXXX`; the cancelled revision task would have been
+  unnecessary churn.
+
+Conclusion: current implementation matches the design contract on all 4
+reported dimensions; the user-visible breakage was the port. If the user still
+wants changes (e.g. a different toggle radius, or a truly "rectangular pill"),
+those are design-opinion changes, not bug fixes.
+
+### Environment state at handoff
+
+- Dashboard dev server running on 3002 (PID 31301, `next dev -p 3002`); leave
+  it or restart via `npm run dev` in `apps/dashboard/`.
+- Port 3000 = API, 3001 = PostgREST (both OrbStack/docker).
+- agent-browser session left open on `http://localhost:3002/` (close with
+  `agent-browser close` when done).
+- Reusable specialist sessions (background job board): `des-1`
+  (ses_0187fdd59ffeKU3peG2HnvbH57, designer, full dashboard context),
+  `exp-1`, `ora-1`, `fix-1`, `lib-1`.
+
+### Next steps
+
+1. Update `apps/AGENTS.md` (and any docs) to port **3002** — or free 3001 from
+   PostgREST and switch back, then document the choice.
+2. Optional: reconcile the earlier 4 reported issues with the user — evidence
+   says they are already correct against the design HTML exports.
+3. Re-run the cancelled revision ONLY if the user asks for design-opinion
+   changes beyond the design contract.
+
+## Dashboard — Button icon+label inline fix (2026-08-10)
+
+User reported buttons with icons stacking **atas-bawah** (icon above label)
+instead of inline. Reproduced on the playground "With Icons" section in
+`apps/dashboard/src/app/page.tsx` (e.g. Generate Key, Test Endpoint, Add
+Device).
+
+### Root cause
+
+Not a page-level layout issue. `apps/dashboard/src/components/Button.tsx`
+wraps `children` in a loading-state `<span>`:
+
+```tsx
+<span className={cx(loading && "invisible")}>{children}</span>
+```
+
+- The outer `<button>` already has `inline-flex items-center gap-1.5`, but
+  flex only applies to **direct** children (spinner + wrapper span).
+- Inside the wrapper, icon SVG + text are normal flow.
+- Tailwind Preflight sets `svg { display: block }`, so SVG + adjacent text
+  stack vertically.
+
+Earlier investigation (section above) checked **icon-only** buttons
+(`variant="icon"`) and correctly saw flex centering — that path has a single
+SVG child, so the bug never showed. The "With Icons" path (icon **and**
+label text inside one Button) was the real case.
+
+### Fix
+
+Make the content wrapper flex as well:
+
+```tsx
+<span
+  className={cx(
+    "inline-flex items-center justify-center gap-1.5",
+    loading && "invisible",
+  )}
+>
+  {children}
+</span>
+```
+
+File: `apps/dashboard/src/components/Button.tsx`. All icon+label usages
+(playground, EmptyState CTAs, etc.) pick this up automatically — no
+`page.tsx` changes needed.
+
+### Note for next agent
+
+If similar "icon + text stacked" reports land on other components, check for
+a non-flex wrapper around mixed SVG/text children under Tailwind Preflight
+before redesigning page layout.
 
 
