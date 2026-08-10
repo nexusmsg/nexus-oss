@@ -1,19 +1,16 @@
 /* ── Typed fetch wrapper ──
  *
- * Base URL from `NEXT_PUBLIC_API_URL`, JSON (de)serialization, shared
- * Authorization resolution (see ./auth), WABA error-envelope normalization
- * (`{ error: { message, type, code } }`), and the one-shot 401 → Basic prompt
- * retry when no bearer token is configured.
+ * JSON (de)serialization, shared Authorization resolution (see ./auth),
+ * WABA error-envelope normalization (`{ error: { message, type, code } }`).
+ * Uses same-origin requests (empty base URL).
  */
 
-import { getBearerToken, promptForBasicAuth, resolveAuthHeader } from "./auth";
+import { resolveAuthHeader } from "./auth";
 import { ApiError } from "./types";
 
-const DEFAULT_API_BASE_URL = "http://localhost:3000";
-
-/** Base URL from `NEXT_PUBLIC_API_URL`, normalized to no trailing slash. */
+/** Base URL for same-origin API calls (empty string = relative URL). */
 export function getApiBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+  return "";
 }
 
 /** Shape of the WABA error envelope body. */
@@ -54,7 +51,7 @@ async function readBody(res: Response): Promise<unknown> {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   const auth = resolveAuthHeader();
   if (auth !== null) headers.set("Authorization", auth);
@@ -64,12 +61,6 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
   }
 
   const res = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers });
-
-  // One-shot Basic prompt: only when no bearer token is configured.
-  if (res.status === 401 && !retried && getBearerToken() === undefined) {
-    const header = promptForBasicAuth();
-    if (header !== null) return request<T>(path, init, true);
-  }
 
   if (!res.ok) {
     throw normalizeApiError(

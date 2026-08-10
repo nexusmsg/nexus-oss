@@ -1,0 +1,47 @@
+/**
+ * Route Handler: GET /api/v1/sessions/[serial]
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { composeServices } from "@/lib/api/compose";
+import { loadConfig } from "@/lib/api/config";
+import { authorizeBearer } from "@/lib/api/server-auth";
+import type { Session } from "@/lib/api/domain/session";
+
+export const runtime = "nodejs";
+
+function toSessionJson(session: Session) {
+  return {
+    id: session.serial,
+    phone_number_id: session.phoneNumberId,
+    number: session.number,
+    display_phone: session.displayPhone,
+    business_account_id: session.businessAccountId,
+    status: session.status,
+    whatsapp_id: session.whatsappId,
+    connected_at: session.connectedAt,
+    last_seen_at: session.lastSeenAt,
+    logged_out_at: session.loggedOutAt,
+    created_at: session.createdAt,
+  };
+}
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ serial: string }> }
+) {
+  const config = loadConfig();
+  if (!authorizeBearer(req, config.apiAuthToken)) {
+    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
+  }
+
+  const { serial } = await params;
+  const { sessionService } = composeServices(config);
+  const session = await sessionService.getSession(serial);
+
+  if (session === null) {
+    return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
+  }
+
+  return NextResponse.json(toSessionJson(session));
+}

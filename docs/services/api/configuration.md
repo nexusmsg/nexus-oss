@@ -10,7 +10,7 @@ All values are read from environment variables. Source:
 | `SUPABASE_SERVICE_ROLE_KEY` | — (required) | Service-role key; dev = HS256 JWT `{"role":"postgres"}` signed with `PGRST_JWT_SECRET` |
 | `API_AUTH_TOKEN` | `` (empty) | Shared secret for public WABA routes and `/api/v1/*`; accepted as Bearer **or** Basic (password = `API_AUTH_TOKEN`); empty disables auth |
 | `INTERNAL_TOKEN` | `` (empty) | Bearer token for `/internal/*` routes; empty disables them (401) |
-| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allow-list of origins allowed to call `/api/v1/*` cross-origin; empty string disables CORS |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3002` | Comma-separated allow-list of origins allowed to call `/api/v1/*` cross-origin; empty string disables CORS |
 | `SEND_TIMEOUT_MS` | `25000` | Max wall-clock time to wait for a job terminal state |
 | `RESULT_POLL_MS` | `250` | Delay between job status polls |
 

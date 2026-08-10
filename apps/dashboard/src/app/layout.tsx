@@ -24,7 +24,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable} h-full`}
     >
-      <body className="min-h-full bg-canvas text-fg font-sans antialiased">
+      {/* suppressHydrationWarning: browser extensions inject stray attrs
+          (e.g. inmaintabuse) into <body> before React hydrates */}
+      <body
+        className="min-h-full bg-canvas text-fg font-sans antialiased"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>

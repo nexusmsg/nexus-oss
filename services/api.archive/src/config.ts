@@ -30,18 +30,18 @@ export interface Config {
   resultPollMs: number;
   /**
    * Allow-list of origins permitted to call `/api/v1/*` cross-origin (CORS).
-   * Parsed from the comma-separated `CORS_ORIGINS` env var. Defaults to
-   * `["http://localhost:5173"]` (the Vite dev origin); an empty array disables
-   * CORS entirely.
+   * Parsed from the comma-separated `CORS_ORIGINS` env var. Defaults to the
+   * dev dashboard origins `["http://localhost:5173", "http://localhost:3002"]`;
+   * an empty array disables CORS entirely.
    */
   corsOrigins: string[];
 }
 
-const DEFAULT_CORS_ORIGIN = "http://localhost:5173";
+const DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://localhost:3002"];
 
 function parseCorsOrigins(value: string | undefined): string[] {
   if (value === undefined) {
-    return [DEFAULT_CORS_ORIGIN];
+    return [...DEFAULT_CORS_ORIGINS];
   }
   return value
     .split(",")

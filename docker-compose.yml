@@ -74,6 +74,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoicG9zdGdyZXMifQ.d4y_K_hxLZpO3fNZxeZqabxMtleGVqtL44GxxPprm5A}
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3002}
     ports:
       - "3000:3000"
     depends_on:

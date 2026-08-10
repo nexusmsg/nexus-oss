@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 
 describe("loadConfig — CORS_ORIGINS", () => {
-  it("defaults to the Vite dev origin when unset", () => {
+  it("defaults to the dev dashboard origins when unset", () => {
     const cfg = loadConfig({});
-    expect(cfg.corsOrigins).toEqual(["http://localhost:5173"]);
+    expect(cfg.corsOrigins).toEqual([
+      "http://localhost:5173",
+      "http://localhost:3002",
+    ]);
   });
 
   it("parses a comma-separated list, trimming whitespace and dropping empties", () => {
