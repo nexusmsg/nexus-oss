@@ -354,8 +354,8 @@ executor).
 > ground up as a Next.js 16 app on top of the newly built design system. The
 > "Components Missing" investigation and "Button icon+label inline fix"
 > sections below are likewise superseded historical records — their fixes
-> already landed in the current design system. The authoritative plan is
-> `.opencode/plans/dashboard.md` (M2 — screens phase). Worker sections at the
+> already landed in the current design system. The current sessions milestone is
+> tracked in `.opencode/plans/sessions-page.md`. Worker sections at the
 > top of this file remain current; the dashboard sections below are frozen
 > history.
 
@@ -370,9 +370,9 @@ Rebuilt from the ground up after the Vite implementation was deleted:
   components + icons in `src/components/`, verified playground at `/` (no
   horizontal overflow at 360/480/768/1440/1920). Button icon+label inline fix
   already applied.
-- **Screens phase (next)**: routes, API client + auth gate, then screens
-  (sessions, webhooks, overview, api-keys, jobs, settings). Milestone **M2**
-  in `.opencode/plans/dashboard.md`.
+- **Screens phase (next)**: routes, API client + auth gate, then screens. The
+  current sessions milestone is tracked in
+  `.opencode/plans/sessions-page.md`.
 - **Not committed yet**: the whole `apps/dashboard/` tree is untracked.
 
 ## Nexus Dashboard (M1, 2026-08-05) — HISTORICAL (deleted implementation)
@@ -398,7 +398,7 @@ The frontend area now has its first app — the **Nexus developer portal**:
   requests); `Config` still flows from `compose.ts` → `buildApp` → `createApp`.
 - New docs: `docs/apps/README.md` (app index), `docs/README.md` apps rows
   updated, `docs/services/api/configuration.md` gains `CORS_ORIGINS` + auth
-  notes. Plan: `.opencode/plans/dashboard.md` (M1 marked completed).
+  notes. The old dashboard plan is historical and has been removed.
 - Stale API docs fixed (commit `82d608b`): `docs/services/api/endpoints.md` +
   `docs/services/api/architecture.md` now document Bearer-or-Basic auth with
   `WWW-Authenticate: Basic realm="nexus"`, the `/api/v1/*` CORS section, and
@@ -740,5 +740,4 @@ File: `apps/dashboard/src/components/Button.tsx`. All icon+label usages
 If similar "icon + text stacked" reports land on other components, check for
 a non-flex wrapper around mixed SVG/text children under Tailwind Preflight
 before redesigning page layout.
-
 
