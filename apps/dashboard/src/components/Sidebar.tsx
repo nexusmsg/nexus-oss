@@ -14,9 +14,14 @@ interface NavItem {
   count?: number;
 }
 
-interface SidebarProps {
-  /** Current nav items. */
+interface NavGroup {
+  title: string;
   items: NavItem[];
+}
+
+interface SidebarProps {
+  /** Nav groups rendered as sections. */
+  groups: NavGroup[];
   /** User info displayed in footer. */
   user?: {
     name: string;
@@ -31,7 +36,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
-  items,
+  groups,
   user,
   open = false,
   onClose,
@@ -46,21 +51,6 @@ export function Sidebar({
     mql.addEventListener("change", check);
     return () => mql.removeEventListener("change", check);
   }, []);
-
-  // Group items into sections
-  const sections: { title: string; items: NavItem[] }[] = [];
-  let current = { title: "Overview", items: [] as NavItem[] };
-  for (const item of items) {
-    if (item.label === "Sessions" || item.label === "Webhooks") {
-      if (current.items.length > 0) sections.push(current);
-      current = { title: "Manage", items: [] };
-    } else if (item.label === "Jobs" || item.label === "Settings") {
-      if (current.items.length > 0) sections.push(current);
-      current = { title: "Monitor", items: [] };
-    }
-    current.items.push(item);
-  }
-  if (current.items.length > 0) sections.push(current);
 
   const sidebar = (
     <aside
@@ -81,7 +71,7 @@ export function Sidebar({
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-3">
-        {sections.map((section) => (
+        {groups.map((section) => (
           <div key={section.title} className="mb-1">
             <div className="px-3 pt-3 pb-1.5 text-2xs font-semibold uppercase tracking-wider text-muted">
               {section.title}

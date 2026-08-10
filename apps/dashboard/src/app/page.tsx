@@ -53,13 +53,26 @@ import {
 } from "@/components/icons";
 
 /* ── Sidebar nav config ── */
-const sidebarItems = [
-  { icon: <IconDashboard />, label: "Dashboard", href: "#" },
-  { icon: <IconKey />, label: "API Keys", href: "#", count: 3 },
-  { icon: <IconPhone />, label: "Sessions", href: "#" },
-  { icon: <IconWebhook />, label: "Webhooks", href: "#" },
-  { icon: <IconJobs />, label: "Jobs", href: "#" },
-  { icon: <IconSettings />, label: "Settings", href: "#" },
+const sidebarGroups = [
+  {
+    title: "Overview",
+    items: [{ icon: <IconDashboard />, label: "Dashboard", href: "#" }],
+  },
+  {
+    title: "Manage",
+    items: [
+      { icon: <IconKey />, label: "API Keys", href: "#", count: 3 },
+      { icon: <IconPhone />, label: "Sessions", href: "#" },
+      { icon: <IconWebhook />, label: "Webhooks", href: "#" },
+    ],
+  },
+  {
+    title: "Monitor",
+    items: [
+      { icon: <IconJobs />, label: "Jobs", href: "#" },
+      { icon: <IconSettings />, label: "Settings", href: "#" },
+    ],
+  },
 ];
 
 /* ── Page ───────────────────────────────────────────────── */
@@ -111,7 +124,7 @@ export default function PlaygroundPage() {
     <div className="flex bg-canvas text-fg">
       {/* ── Sidebar ── */}
       <Sidebar
-        items={sidebarItems}
+        groups={sidebarGroups}
         user={{ name: "Aziz M.", role: "Admin", initials: "AZ" }}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
