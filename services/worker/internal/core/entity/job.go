@@ -37,9 +37,12 @@ type Job struct {
 }
 
 // JobResult is the persisted result of a completed job. wa_message_id is the
-// hard contract the API reads to correlate a job with the WhatsApp message.
+// hard contract the API reads to correlate a send_message job with the
+// WhatsApp message; qr_serial is the analogous contract for pairing jobs,
+// surfacing the QR row that the worker generated so the API can fetch it.
 type JobResult struct {
-	WA_MESSAGE_ID string `json:"wa_message_id"`
+	WA_MESSAGE_ID string `json:"wa_message_id,omitempty"`
+	QrSerial      string `json:"qr_serial,omitempty"`
 }
 
 // WebhookConfig is the forwarding configuration for a phone number.

@@ -41,7 +41,7 @@ export function composeServices(config: Config): WiredServices {
 
   const webhookConfig: WebhookConfigProvider = new GetWebhookConfigService(transport);
 
-  const sessionService: SessionServicePort = new SessionService(transport);
+  const sessionService: SessionServicePort = new SessionService(transport, transport);
 
   const webhookManagement = new WebhookConfigManagementService(transport);
 

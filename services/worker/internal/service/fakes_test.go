@@ -49,10 +49,13 @@ func (s *recordingSender) Send(_ context.Context, message entity.OutboundMessage
 
 // fakeSessionStore is an in-memory ports.SessionStore for hermetic tests.
 type fakeSessionStore struct {
+	mu          sync.Mutex
 	sessions    map[string]*entity.Session
 	statuses    map[string]string
 	whatsappIDs map[string]string
 	qrCodes     map[string]string
+	qrSerials   map[string]string // phone -> qr serial
+	qrCounter   int
 }
 
 func newFakeSessionStore() *fakeSessionStore {
@@ -61,15 +64,20 @@ func newFakeSessionStore() *fakeSessionStore {
 		statuses:    map[string]string{},
 		whatsappIDs: map[string]string{},
 		qrCodes:     map[string]string{},
+		qrSerials:   map[string]string{},
 	}
 }
 
 func (s *fakeSessionStore) UpdateStatus(_ context.Context, phoneNumberID, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.statuses[phoneNumberID] = status
 	return nil
 }
 
 func (s *fakeSessionStore) MarkConnected(_ context.Context, phoneNumberID, whatsappID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.statuses[phoneNumberID] = entity.SessionStatusConnected
 	s.whatsappIDs[phoneNumberID] = whatsappID
 	return nil
@@ -77,9 +85,14 @@ func (s *fakeSessionStore) MarkConnected(_ context.Context, phoneNumberID, whats
 
 func (s *fakeSessionStore) UpdateHeartbeats(_ context.Context, _ []string) error { return nil }
 
-func (s *fakeSessionStore) StoreQrCode(_ context.Context, phoneNumberID, qrCode string, _ time.Time) error {
+func (s *fakeSessionStore) StoreQrCode(_ context.Context, phoneNumberID, qrCode string, _ time.Time, _ string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.qrCodes[phoneNumberID] = qrCode
-	return nil
+	s.qrCounter++
+	serial := fmt.Sprintf("qr-fake-%d", s.qrCounter)
+	s.qrSerials[phoneNumberID] = serial
+	return serial, nil
 }
 
 func (s *fakeSessionStore) GetSessionID(_ context.Context, _ string) (int64, error) { return 0, nil }

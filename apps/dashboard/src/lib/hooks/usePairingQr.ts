@@ -4,9 +4,15 @@
  *
  * Flow (per the sessions milestone plan):
  *   `start(serial)` / `refresh()` → POST /sessions/:serial/pairing → poll
- *   GET .../pairing/qr every 3s until `ready` (render QR), `expired` (hard
- *   timeout / the worker marked it expired), or an error. `cancel()` stops
- *   polling; the loop is torn down on unmount via an AbortController.
+ *   GET .../pairing/qr?job_serial=… every 3s until `ready` (render QR),
+ *   `expired` (hard timeout / the worker marked it expired), or an error.
+ *   `cancel()` stops polling; the loop is torn down on unmount via an
+ *   AbortController.
+ *
+ * The hook threads the `job_serial` returned by the pairing POST into every
+ * subsequent GET so the dashboard never reads a QR row produced by a
+ * previous (or in-flight) pairing attempt — that's how stale-QR reads are
+ * avoided when several pairing jobs overlap on the same session.
  *
  * The worker only ever stores the FIRST QR per pairing job, so `refresh()`
  * always re-issues the pairing POST and resets the poll from scratch.
@@ -30,6 +36,8 @@ export interface UsePairingQrReturn {
   qrCode: string | null;
   /** Human-readable message for the `error` phase. */
   error: string | null;
+  /** Serial of the in-flight pairing job (null until POST returns). */
+  jobSerial: string | null;
   /** Issue a new pairing job for `serial` and start/restart the poll. */
   start: (serial: string) => Promise<void>;
   /** Re-issue pairing for the current serial and reset the poll. */
@@ -65,6 +73,7 @@ export function usePairingQr(options: UsePairingQrOptions = {}): UsePairingQrRet
   const [phase, setPhase] = useState<QrPhase>("generating");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [jobSerial, setJobSerial] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const activeRef = useRef(false);
   const serialRef = useRef<string | null>(null);
@@ -87,8 +96,13 @@ export function usePairingQr(options: UsePairingQrOptions = {}): UsePairingQrRet
       activeRef.current = true;
       const deadline = Date.now() + timeoutMs;
 
+      let activeJobSerial: string | null = null;
       try {
-        await requestPairing(serial);
+        const accepted = await requestPairing(serial);
+        activeJobSerial = accepted.job_serial;
+        if (activeRef.current) {
+          setJobSerial(activeJobSerial);
+        }
       } catch (err) {
         if (activeRef.current) {
           setPhase("error");
@@ -102,11 +116,27 @@ export function usePairingQr(options: UsePairingQrOptions = {}): UsePairingQrRet
 
         let qr: PairingQr;
         try {
-          qr = await getPairingQr(serial, { signal: controller.signal });
+          qr = await getPairingQr(serial, {
+            jobSerial: activeJobSerial ?? undefined,
+            init: { signal: controller.signal },
+          });
         } catch (err) {
           if (!activeRef.current) return;
           setPhase("error");
           setError(err instanceof Error ? err.message : "Failed to load pairing QR");
+          return;
+        }
+
+        // Job terminal failure: surface as error (e.g. already paired race,
+        // device offline). When the server filtered by job_serial, this is
+        // reliable; the legacy no-filter path can't observe job status, so
+        // we only treat it as authoritative when job_status is set.
+        if (
+          qr.job_status === "failed" &&
+          activeJobSerial !== null
+        ) {
+          setPhase("error");
+          setError("Pairing job failed");
           return;
         }
 
@@ -136,6 +166,7 @@ export function usePairingQr(options: UsePairingQrOptions = {}): UsePairingQrRet
       setPhase("generating");
       setQrCode(null);
       setError(null);
+      setJobSerial(null);
       await runPoll(serial);
     },
     [runPoll],
@@ -148,6 +179,7 @@ export function usePairingQr(options: UsePairingQrOptions = {}): UsePairingQrRet
       setPhase("generating");
       setQrCode(null);
       setError(null);
+      setJobSerial(null);
       await runPoll(serial);
     },
     [runPoll],
@@ -158,8 +190,9 @@ export function usePairingQr(options: UsePairingQrOptions = {}): UsePairingQrRet
     serialRef.current = null;
     setQrCode(null);
     setError(null);
+    setJobSerial(null);
     setPhase("generating");
   }, [stop]);
 
-  return { phase, qrCode, error, start, refresh, cancel };
+  return { phase, qrCode, error, jobSerial, start, refresh, cancel };
 }

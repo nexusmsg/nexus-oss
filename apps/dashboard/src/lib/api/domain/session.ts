@@ -36,6 +36,8 @@ export interface SessionQrCode {
   qrCode: string;
   status: QrCodeStatus;
   expiresAt: string;
+  /** Serial of the pairing job that produced this QR; null for legacy rows. */
+  jobSerial: string | null;
   createdAt: string;
 }
 

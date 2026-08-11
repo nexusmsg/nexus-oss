@@ -29,8 +29,22 @@ export async function requestPairing(serial: string): Promise<JobAccepted> {
   return apiPost<JobAccepted>(`/api/v1/sessions/${encodeURIComponent(serial)}/pairing`);
 }
 
-export async function getPairingQr(serial: string, init?: RequestInit): Promise<PairingQr> {
-  return apiGet<PairingQr>(`/api/v1/sessions/${encodeURIComponent(serial)}/pairing/qr`, init);
+/**
+ * Fetches the pairing QR for a session. Pass `jobSerial` to scope the
+ * response to the QR produced by a specific pairing job — without it, the
+ * endpoint returns the most recent QR for the session (legacy behavior).
+ */
+export async function getPairingQr(
+  serial: string,
+  options?: { jobSerial?: string; init?: RequestInit },
+): Promise<PairingQr> {
+  const params = options?.jobSerial
+    ? `?job_serial=${encodeURIComponent(options.jobSerial)}`
+    : "";
+  return apiGet<PairingQr>(
+    `/api/v1/sessions/${encodeURIComponent(serial)}/pairing/qr${params}`,
+    options?.init,
+  );
 }
 
 export async function logout(serial: string): Promise<JobAccepted> {

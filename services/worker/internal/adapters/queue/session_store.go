@@ -95,21 +95,26 @@ where phone_number_id = $1 and deleted_at is null`, phoneNumberID).Scan(&id)
 	return id, nil
 }
 
-func (s *SessionStore) StoreQrCode(ctx context.Context, phoneNumberID string, qrCode string, expiresAt time.Time) error {
+// StoreQrCode inserts a QR row tagged with the originating pairing job's
+// serial and returns the new row's serial so the executor can surface it on
+// the JobResult.
+func (s *SessionStore) StoreQrCode(ctx context.Context, phoneNumberID string, qrCode string, expiresAt time.Time, jobSerial string) (string, error) {
 	sessionID, err := s.GetSessionID(ctx, phoneNumberID)
 	if err != nil {
-		return err
+		return "", err
 	}
-	tag, err := s.pool.Exec(ctx, `
-insert into session_qr_codes (session_id, phone_number_id, qr_code, status, expires_at)
-values ($1, $2, $3, 'ready', $4)`, sessionID, phoneNumberID, qrCode, expiresAt)
+	var serial string
+	err = s.pool.QueryRow(ctx, `
+insert into session_qr_codes (session_id, phone_number_id, qr_code, status, expires_at, job_serial)
+values ($1, $2, $3, 'ready', $4, $5)
+returning serial`, sessionID, phoneNumberID, qrCode, expiresAt, jobSerial).Scan(&serial)
 	if err != nil {
-		return fmt.Errorf("session store: store qr code for %q: %w", phoneNumberID, err)
+		return "", fmt.Errorf("session store: store qr code for %q: %w", phoneNumberID, err)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("session store: store qr code for %q: no row inserted", phoneNumberID)
+	if serial == "" {
+		return "", fmt.Errorf("session store: store qr code for %q: no row inserted", phoneNumberID)
 	}
-	return nil
+	return serial, nil
 }
 
 // ListSessions returns all non-deleted sessions, newest first.

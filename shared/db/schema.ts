@@ -9,6 +9,7 @@
  * - 000004_webhook_management (webhook_subscriptions + extensions to webhook_configs)
  * - 000005_add_business_account_id_to_sessions
  * - 000007_create_whatsmeow_jobs
+ * - 000008_add_qr_job_serial
  */
 
 import {
@@ -23,6 +24,7 @@ import {
   uuid,
   pgTable,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ============================================================================
 // Jobs (000001)
@@ -63,7 +65,7 @@ export const jobs = pgTable(
     serialIdx: uniqueIndex("jobs_serial_idx").on(table.serial),
     idempotencyKeyIdx: uniqueIndex("jobs_idempotency_key_idx")
       .on(table.idempotencyKey)
-      .where("idempotency_key IS NOT NULL"),
+      .where(sql`idempotency_key IS NOT NULL`),
     claimIdx: index("jobs_claim_idx").on(table.status, table.availableAt, table.createdAt),
   }),
 );
@@ -132,7 +134,7 @@ export const sessions = pgTable(
 );
 
 // ============================================================================
-// Session QR Codes (000003)
+// Session QR Codes (000003 + 000008 job_serial)
 // ============================================================================
 
 export const sessionQrCodes = pgTable(
@@ -150,6 +152,11 @@ export const sessionQrCodes = pgTable(
       .default("pending")
       .$type<"pending" | "ready" | "expired">(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Links the QR row back to the pairing job that produced it (migration
+    // 000008). Nullable: rows written before the column existed stay valid,
+    // and rows from non-job paths (e.g. dashboard-initiated pairing via a
+    // future flow) can omit it.
+    jobSerial: uuid("job_serial"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -163,6 +170,9 @@ export const sessionQrCodes = pgTable(
       table.sessionId,
       table.createdAt,
     ),
+    jobSerialIdx: index("session_qr_codes_job_serial_idx")
+      .on(table.jobSerial)
+      .where(sql`job_serial IS NOT NULL`),
   }),
 );
 
@@ -233,7 +243,7 @@ export const whatsmeowJobs = pgTable(
     serialIdx: uniqueIndex("whatsmeow_jobs_serial_idx").on(table.serial),
     idempotencyKeyIdx: uniqueIndex("whatsmeow_jobs_idempotency_key_idx")
       .on(table.idempotencyKey)
-      .where("idempotency_key IS NOT NULL"),
+      .where(sql`idempotency_key IS NOT NULL`),
     claimIdx: index("whatsmeow_jobs_claim_idx").on(
       table.status,
       table.availableAt,
@@ -241,7 +251,7 @@ export const whatsmeowJobs = pgTable(
     ),
     sourceIdx: index("whatsmeow_jobs_source_idx")
       .on(table.sourceJobSerial)
-      .where("source_job_serial IS NOT NULL"),
+      .where(sql`source_job_serial IS NOT NULL`),
   }),
 );
 

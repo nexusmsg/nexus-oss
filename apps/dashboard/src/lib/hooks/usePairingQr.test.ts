@@ -13,7 +13,12 @@ import { getPairingQr, requestPairing } from "@/lib/api/sessions";
 const mockedPairing = vi.mocked(requestPairing);
 const mockedQr = vi.mocked(getPairingQr);
 
-const NOT_FOUND: PairingQr = { status: "not_found", qr_code: null };
+const NOT_FOUND: PairingQr = {
+  status: "not_found",
+  qr_code: null,
+  qr_serial: null,
+  expires_at: null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -31,7 +36,12 @@ describe("usePairingQr", () => {
     mockedPairing.mockResolvedValue({ job_serial: "job_1" });
     mockedQr
       .mockResolvedValueOnce(NOT_FOUND)
-      .mockResolvedValueOnce({ status: "ready", qr_code: "qr-data" });
+      .mockResolvedValueOnce({
+        status: "ready",
+        qr_code: "qr-data",
+        qr_serial: "qr_1",
+        expires_at: "2026-08-11T00:00:00Z",
+      });
 
     const { result } = renderHook(() =>
       usePairingQr({ intervalMs: 1000, timeoutMs: 60000 }),
@@ -44,6 +54,7 @@ describe("usePairingQr", () => {
     });
     // First poll returned not_found → still generating.
     expect(result.current.phase).toBe("generating");
+    expect(result.current.jobSerial).toBe("job_1");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
@@ -52,6 +63,12 @@ describe("usePairingQr", () => {
     expect(result.current.qrCode).toBe("qr-data");
     expect(mockedPairing).toHaveBeenCalledTimes(1);
     expect(mockedPairing).toHaveBeenCalledWith("ses_1");
+    // The serial from POST is threaded into the GET filter so the dashboard
+    // never reads a QR produced by a different pairing job.
+    expect(mockedQr).toHaveBeenCalledWith(
+      "ses_1",
+      expect.objectContaining({ jobSerial: "job_1" }),
+    );
   });
 
   it("flips to expired when the QR never arrives before the deadline", async () => {
@@ -82,6 +99,8 @@ describe("usePairingQr", () => {
     mockedQr.mockResolvedValueOnce(NOT_FOUND).mockResolvedValueOnce({
       status: "expired",
       qr_code: null,
+      qr_serial: null,
+      expires_at: null,
     });
 
     const { result } = renderHook(() =>
@@ -96,6 +115,56 @@ describe("usePairingQr", () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(result.current.phase).toBe("expired");
+  });
+
+  it("flips to error when the worker reports the pairing job failed", async () => {
+    vi.useFakeTimers();
+    mockedPairing.mockResolvedValue({ job_serial: "job_1" });
+    mockedQr.mockResolvedValueOnce({
+      ...NOT_FOUND,
+      job_serial: "job_1",
+      job_status: "failed",
+    });
+
+    const { result } = renderHook(() =>
+      usePairingQr({ intervalMs: 1000, timeoutMs: 60000 }),
+    );
+
+    await act(async () => {
+      void result.current.start("ses_1");
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.phase).toBe("error");
+    expect(result.current.error).toContain("Pairing job failed");
+  });
+
+  it("keeps polling while job_status is pending even without a QR row yet", async () => {
+    vi.useFakeTimers();
+    mockedPairing.mockResolvedValue({ job_serial: "job_1" });
+    mockedQr.mockResolvedValue({
+      status: "not_found",
+      qr_code: null,
+      qr_serial: null,
+      expires_at: null,
+      job_serial: "job_1",
+      job_status: "pending",
+    });
+
+    const { result } = renderHook(() =>
+      usePairingQr({ intervalMs: 1000, timeoutMs: 60000 }),
+    );
+
+    await act(async () => {
+      void result.current.start("ses_1");
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.phase).toBe("generating");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(result.current.phase).toBe("generating");
+    expect(mockedQr.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("surfaces pairing failures as the error phase", async () => {
@@ -117,7 +186,8 @@ describe("usePairingQr", () => {
 
   it("refresh() re-issues pairing and resets the poll", async () => {
     vi.useFakeTimers();
-    mockedPairing.mockResolvedValue({ job_serial: "job_1" });
+    mockedPairing.mockResolvedValueOnce({ job_serial: "job_1" });
+    mockedPairing.mockResolvedValueOnce({ job_serial: "job_2" });
     mockedQr.mockResolvedValue(NOT_FOUND);
 
     const { result } = renderHook(() =>
@@ -128,8 +198,14 @@ describe("usePairingQr", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(mockedPairing).toHaveBeenCalledTimes(1);
+    expect(result.current.jobSerial).toBe("job_1");
 
-    mockedQr.mockResolvedValueOnce({ status: "ready", qr_code: "new-qr" });
+    mockedQr.mockResolvedValueOnce({
+      status: "ready",
+      qr_code: "new-qr",
+      qr_serial: "qr_2",
+      expires_at: "2026-08-11T00:00:00Z",
+    });
     await act(async () => {
       void result.current.refresh();
       await vi.advanceTimersByTimeAsync(0);
@@ -138,6 +214,8 @@ describe("usePairingQr", () => {
     expect(mockedPairing).toHaveBeenCalledTimes(2);
     expect(result.current.phase).toBe("ready");
     expect(result.current.qrCode).toBe("new-qr");
+    // refresh() picks up the new serial from the second POST.
+    expect(result.current.jobSerial).toBe("job_2");
   });
 
   it("cancel() stops polling without further QR requests", async () => {
@@ -159,6 +237,7 @@ describe("usePairingQr", () => {
     });
     expect(result.current.phase).toBe("generating");
     expect(result.current.qrCode).toBeNull();
+    expect(result.current.jobSerial).toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);

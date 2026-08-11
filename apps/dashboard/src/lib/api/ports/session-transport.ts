@@ -21,6 +21,8 @@ export interface SessionTransport {
   createLogoutJob(phoneNumberId: string): Promise<string>;
   /** Fetch the most recent QR code for a session; null when absent. */
   getLatestQrCode(sessionId: number): Promise<SessionQrCode | null>;
+  /** Fetch the QR code row produced by a specific pairing job; null when absent. */
+  getQrCodeByJobSerial(jobSerial: string): Promise<SessionQrCode | null>;
   /** INSERT a QR code row for a session. */
   storeQrCode(sessionId: number, phoneNumberId: string, qrCode: string, expiresAt: Date): Promise<void>;
   /** Touch last_seen_at for a session by phone_number_id. */

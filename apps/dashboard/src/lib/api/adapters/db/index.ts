@@ -223,6 +223,21 @@ export class DrizzleTransport
     return this.mapQrCode(row);
   }
 
+  async getQrCodeByJobSerial(jobSerial: string): Promise<SessionQrCode | null> {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(sessionQrCodes)
+      .where(eq(sessionQrCodes.jobSerial, jobSerial))
+      .orderBy(desc(sessionQrCodes.createdAt))
+      .limit(1);
+
+    if (!row) {
+      return null;
+    }
+    return this.mapQrCode(row);
+  }
+
   async storeQrCode(
     sessionId: number,
     phoneNumberId: string,
@@ -300,6 +315,7 @@ export class DrizzleTransport
       qrCode: row.qrCode,
       status: row.status as SessionQrCode["status"],
       expiresAt: String(row.expiresAt),
+      jobSerial: row.jobSerial as string | null,
       createdAt: String(row.createdAt),
     };
   }

@@ -17,8 +17,10 @@ type SessionStore interface {
 	// UpdateHeartbeats refreshes last_seen_at for the given phone number IDs.
 	// Missing or already-deleted sessions are tolerated.
 	UpdateHeartbeats(ctx context.Context, phoneNumberIDs []string) error
-	// StoreQrCode stores a QR code payload tied to a session.
-	StoreQrCode(ctx context.Context, phoneNumberID string, qrCode string, expiresAt time.Time) error
+	// StoreQrCode persists a freshly generated QR code row tied to a session
+	// and the pairing job that requested it. It returns the QR row's serial so
+	// the caller can surface it on the job result.
+	StoreQrCode(ctx context.Context, phoneNumberID string, qrCode string, expiresAt time.Time, jobSerial string) (string, error)
 	// GetSessionID returns the session ID for a phone_number_id (for FK).
 	GetSessionID(ctx context.Context, phoneNumberID string) (int64, error)
 	// ListSessions returns all non-deleted sessions, newest first.

@@ -98,8 +98,11 @@ func (e *WhatsAppExecutor) ensureDevice(ctx context.Context, jobKind string, pho
 	return session, nil
 }
 
-// handlePairing marks the session as pairing, generates a QR code, persists it,
-// then returns the session to the ready (created) state.
+// handlePairing marks the session as pairing, generates a QR code, persists it
+// tagged with the originating job's serial, then returns the session to the
+// ready (created) state. The returned JobResult carries the QR row's serial so
+// the API can correlate a job with the QR it generated (avoiding stale-QR
+// reads when several pairing jobs overlap on the same session).
 func (e *WhatsAppExecutor) handlePairing(ctx context.Context, job entity.Job) (entity.JobResult, error) {
 	if _, err := e.ensureDevice(ctx, "pairing", job.PhoneNumberID); err != nil {
 		return entity.JobResult{}, err
@@ -124,13 +127,14 @@ func (e *WhatsAppExecutor) handlePairing(ctx context.Context, job entity.Job) (e
 		}
 		return entity.JobResult{}, fmt.Errorf("executor: pair device %q: %w", job.PhoneNumberID, err)
 	}
-	if err := e.sessionStore.StoreQrCode(ctx, job.PhoneNumberID, qrCode, time.Now().Add(whatsmeowQRCodeTTL)); err != nil {
+	qrSerial, err := e.sessionStore.StoreQrCode(ctx, job.PhoneNumberID, qrCode, time.Now().Add(whatsmeowQRCodeTTL), job.SourceJobSerial)
+	if err != nil {
 		return entity.JobResult{}, fmt.Errorf("executor: store qr code: %w", err)
 	}
 	if err := e.sessionStore.UpdateStatus(ctx, job.PhoneNumberID, entity.SessionStatusCreated); err != nil {
 		return entity.JobResult{}, fmt.Errorf("executor: reset status after pairing: %w", err)
 	}
-	return entity.JobResult{}, nil
+	return entity.JobResult{QrSerial: qrSerial}, nil
 }
 
 // handleLogout disconnects the device and marks the session logged out.

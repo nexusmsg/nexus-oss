@@ -35,13 +35,24 @@ export interface Session {
   created_at: string;
 }
 
-/** `GET /api/v1/sessions/:serial/pairing/qr` status values. */
+/** `GET /api/v1/sessions/:serial/pairing/qr` QR status values. */
 export type PairingQrStatus = "pending" | "ready" | "expired" | "not_found";
+
+/** `jobs.status` values surfaced alongside a filtered QR response. */
+export type PairingJobStatus = "pending" | "claimed" | "succeeded" | "failed" | "unknown";
 
 /** Response of `GET /api/v1/sessions/:serial/pairing/qr`. */
 export interface PairingQr {
   status: PairingQrStatus;
   qr_code: string | null;
+  /** Serial of the QR row itself; null when no QR yet. */
+  qr_serial: string | null;
+  /** ISO timestamp; null when no QR row. */
+  expires_at: string | null;
+  /** Echoed back when `?job_serial=` was supplied. */
+  job_serial?: string;
+  /** Pairing job status; only set when filtered by `job_serial`. */
+  job_status?: PairingJobStatus;
 }
 
 /** Accepted job responses (`POST pairing` / `POST logout`). */

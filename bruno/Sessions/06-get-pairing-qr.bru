@@ -5,11 +5,31 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/v1/sessions/{{session_serial}}/pairing/qr
+  url: {{base_url}}/api/v1/sessions/{{session_serial}}/pairing/qr?job_serial={{pairing_job_serial}}
   body: none
   auth: none
 }
 
 headers {
   Authorization: Bearer {{api_token}}
+}
+
+docs {
+  Fetch the QR for the current pairing job.
+
+  Pass `job_serial` (the value returned by `POST .../pairing`) so the API
+  returns the QR row produced by THIS job — without it, the endpoint falls
+  back to the latest QR for the session, which can be stale when several
+  pairing jobs overlap on the same session.
+
+  Response shape:
+
+    {
+      "status": "ready",                 // pending | ready | expired | not_found
+      "qr_code": "2@...",
+      "qr_serial": "...",                // null when no QR row yet
+      "expires_at": "2026-08-11T00:00:00Z",
+      "job_serial": "...",               // echoed back
+      "job_status": "succeeded"          // pending | claimed | succeeded | failed | unknown
+    }
 }
