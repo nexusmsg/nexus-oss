@@ -1,5 +1,5 @@
 /**
- * Route Handler: GET /api/v1/sessions/[serial]
+ * Route Handler: GET, DELETE /api/v1/sessions/[serial]
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -44,4 +44,22 @@ export async function GET(
   }
 
   return NextResponse.json(toSessionJson(session));
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ serial: string }> },
+) {
+  const config = loadConfig();
+  if (!authorizeBearer(req, config.apiAuthToken)) {
+    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
+  }
+
+  const { serial } = await params;
+  const { sessionService } = composeServices(config);
+  const deleted = await sessionService.deleteSession(serial);
+  if (!deleted) {
+    return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
+  }
+  return new NextResponse(null, { status: 204 });
 }

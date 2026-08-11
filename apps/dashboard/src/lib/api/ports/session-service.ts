@@ -45,4 +45,5 @@ export interface SessionServicePort {
   startLogout(serial: string): Promise<{ jobSerial: string } | null>;
   getStatus(serial: string): Promise<{ status: string } | null>;
   heartbeat(phoneNumberId: string): Promise<void>;
+  deleteSession(serial: string): Promise<boolean>;
 }

@@ -5,7 +5,7 @@
  * with the WABA envelope normalized by the client.
  */
 
-import { apiGet, apiPost } from "./client";
+import { apiDelete, apiGet, apiPost } from "./client";
 import type {
   CreateSessionInput,
   JobAccepted,
@@ -49,6 +49,10 @@ export async function getPairingQr(
 
 export async function logout(serial: string): Promise<JobAccepted> {
   return apiPost<JobAccepted>(`/api/v1/sessions/${encodeURIComponent(serial)}/logout`);
+}
+
+export async function deleteSession(serial: string): Promise<void> {
+  await apiDelete(`/api/v1/sessions/${encodeURIComponent(serial)}`);
 }
 
 export async function getSessionStatus(

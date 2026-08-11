@@ -60,7 +60,7 @@ export function Button({
         <span className="absolute inset-0 flex items-center justify-center">
           <span
             className="h-4 w-4 rounded-full border-2 border-accent/30 border-t-accent"
-            style={{ animation: "spin 0.6s linear infinite" }}
+            style={{ animation: "nexus-spin 0.6s linear infinite" }}
           />
         </span>
       )}

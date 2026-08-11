@@ -10,7 +10,7 @@ import {
 } from "@/components";
 import { IconPlus, IconPhone, IconInfo } from "@/components/icons";
 import { useSessions } from "@/lib/hooks/useSessions";
-import { logout } from "@/lib/api/sessions";
+import { deleteSession, logout } from "@/lib/api/sessions";
 import { DeviceCard } from "./components/DeviceCard";
 import { AddDeviceModal } from "./components/AddDeviceModal";
 import { QrModal } from "./components/QrModal";
@@ -24,6 +24,9 @@ export default function SessionsPage() {
   const [qrOpen, setQrOpen] = useState(false);
   const [logoutSerial, setLogoutSerial] = useState<string | null>(null);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [deleteSerial, setDeleteSerial] = useState<string | null>(null);
+  const [deleteMode, setDeleteMode] = useState<"delete" | "cancel">("delete");
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   /* ── QR flows ── */
 
@@ -68,6 +71,30 @@ export default function SessionsPage() {
     }
   }, [logoutSerial, pollStatus, refresh]);
 
+  const requestDelete = useCallback((serial: string, mode: "delete" | "cancel") => {
+    setDeleteSerial(serial);
+    setDeleteMode(mode);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteSerial) return;
+    setDeleteLoading(true);
+    try {
+      const session = sessions.find((item) => item.id === deleteSerial);
+      if (deleteMode === "delete" && session?.status === "connected") {
+        await logout(deleteSerial);
+        await pollStatus(deleteSerial, "logged_out", 15_000);
+      }
+      await deleteSession(deleteSerial);
+      setDeleteSerial(null);
+      await refresh();
+    } catch {
+      // Keep the dialog open so the user can retry after a transient failure.
+    } finally {
+      setDeleteLoading(false);
+    }
+  }, [deleteMode, deleteSerial, pollStatus, refresh, sessions]);
+
   const handleCreated = useCallback(() => {
     refresh();
   }, [refresh]);
@@ -104,10 +131,16 @@ export default function SessionsPage() {
       {loading && sessions.length === 0 && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]">
           {[1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="h-64 animate-pulse rounded-lg bg-surface border border-line"
-            />
+            <div key={i} className="flex h-[242px] flex-col gap-3.5 rounded-lg border border-line bg-surface p-5">
+              <div className="h-5 w-2/3 animate-pulse rounded bg-elevated" />
+              <div className="h-3 w-1/2 animate-pulse rounded bg-elevated" />
+              <div className="mt-2 space-y-2">
+                <div className="h-3 w-4/5 animate-pulse rounded bg-elevated" />
+                <div className="h-3 w-3/4 animate-pulse rounded bg-elevated" />
+                <div className="h-3 w-2/3 animate-pulse rounded bg-elevated" />
+              </div>
+              <div className="mt-auto h-8 animate-pulse rounded bg-elevated" />
+            </div>
           ))}
         </div>
       )}
@@ -137,6 +170,8 @@ export default function SessionsPage() {
               onStartPairing={handleStartPairing}
               onReconnect={handleReconnect}
               onLogout={handleLogoutRequest}
+              onDelete={(serial) => requestDelete(serial, "delete")}
+              onCancel={(serial) => requestDelete(serial, "cancel")}
             />
           ))}
         </div>
@@ -169,6 +204,24 @@ export default function SessionsPage() {
           </Button>
           <Button variant="danger" loading={logoutLoading} onClick={handleLogoutConfirm}>
             Logout
+          </Button>
+        </ModalActions>
+      </Modal>
+
+      <Modal
+        open={!!deleteSerial}
+        onClose={() => setDeleteSerial(null)}
+        title={deleteMode === "cancel" ? "Cancel Pairing" : "Delete Device"}
+      >
+        <p className="mb-2 text-sm text-muted">
+          {deleteMode === "cancel"
+            ? "Cancel pairing and remove this pending device?"
+            : "Delete this device? Connected devices will be logged out first."}
+        </p>
+        <ModalActions>
+          <Button variant="ghost" onClick={() => setDeleteSerial(null)}>Keep Device</Button>
+          <Button variant="danger" loading={deleteLoading} onClick={handleDeleteConfirm}>
+            {deleteMode === "cancel" ? "Cancel Pairing" : "Delete"}
           </Button>
         </ModalActions>
       </Modal>

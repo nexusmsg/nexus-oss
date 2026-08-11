@@ -60,8 +60,8 @@ function relativeTime(iso: string | null): string {
 /* ── Error banner for disconnected/logged_out ── */
 
 function errorBanner(status: Session["status"]): string | null {
-  if (status === "disconnected" || status === "logged_out") {
-    return "Connection lost — device is disconnected. Reconnect to restore it.";
+  if (status === "disconnected") {
+    return "Connection lost — device logged in from another location";
   }
   return null;
 }
@@ -74,6 +74,8 @@ interface DeviceCardProps {
   onStartPairing?: (serial: string) => void;
   onReconnect?: (serial: string) => void;
   onLogout?: (serial: string) => void;
+  onDelete?: (serial: string) => void;
+  onCancel?: (serial: string) => void;
 }
 
 export function DeviceCard({
@@ -82,6 +84,8 @@ export function DeviceCard({
   onStartPairing,
   onReconnect,
   onLogout,
+  onDelete,
+  onCancel,
 }: DeviceCardProps) {
   const badge = errorBanner(session.status);
 
@@ -90,7 +94,7 @@ export function DeviceCard({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="min-w-0">
-          <div className="font-mono text-base font-semibold truncate">
+          <div className="font-mono text-[15px] font-semibold truncate">
             {session.number || session.display_phone || "Unknown"}
           </div>
           {session.display_phone && session.number && (
@@ -100,7 +104,7 @@ export function DeviceCard({
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-3">
-          <StatusDot state={statusDot[session.status]} />
+          <StatusDot state={statusDot[session.status]} size={8} />
           <Badge variant={statusBadge[session.status]} dot>
             {session.status}
           </Badge>
@@ -133,20 +137,16 @@ export function DeviceCard({
                   : "—"}
           </span>
         </div>
-        {session.display_phone && (
-          <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
             <IconUser size={12} className="shrink-0 opacity-60" />
             <span className="min-w-[90px]">Display name</span>
-            <span className="font-mono text-fg">{session.display_phone}</span>
-          </div>
-        )}
-        {session.business_account_id && (
-          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-fg">{session.display_phone || "—"}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
             <IconFile size={12} className="shrink-0 opacity-60" />
             <span className="min-w-[90px]">Account ID</span>
-            <span className="font-mono text-fg">{session.business_account_id}</span>
-          </div>
-        )}
+            <span className="font-mono text-fg">{session.business_account_id || "—"}</span>
+        </div>
       </div>
 
       {/* Action row */}
@@ -171,6 +171,11 @@ export function DeviceCard({
             Show QR
           </Button>
         )}
+        {session.status === "pairing" && (
+          <Button variant="danger" size="sm" className="flex-1 justify-center" onClick={() => onCancel?.(session.id)}>
+            Cancel
+          </Button>
+        )}
         {session.status === "created" && (
           <Button
             variant="primary"
@@ -189,6 +194,11 @@ export function DeviceCard({
             onClick={() => onReconnect?.(session.id)}
           >
             Reconnect
+          </Button>
+        )}
+        {session.status === "logged_out" && (
+          <Button variant="danger" size="sm" className="flex-1 justify-center" onClick={() => onDelete?.(session.id)}>
+            Delete
           </Button>
         )}
       </div>

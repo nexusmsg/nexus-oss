@@ -265,6 +265,16 @@ export class DrizzleTransport
     return this.fetchSessionBy("phoneNumberId", phoneNumberId);
   }
 
+  async deleteSession(serial: string): Promise<boolean> {
+    const db = getDb();
+    const result = await db
+      .update(sessions)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(sessions.serial, serial), isNull(sessions.deletedAt)))
+      .returning({ serial: sessions.serial });
+    return result.length > 0;
+  }
+
   /** Fetch a non-deleted session row by a single column; null when absent. */
   private async fetchSessionBy(
     column: "serial" | "phoneNumberId",

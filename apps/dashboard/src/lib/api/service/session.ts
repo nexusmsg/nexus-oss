@@ -117,6 +117,13 @@ export class SessionService implements SessionServicePort {
     }
     await this.transport.updateSessionHeartbeat(phoneNumberId);
   }
+
+  async deleteSession(serial: string): Promise<boolean> {
+    if (await this.transport.getSession(serial) === null) {
+      return false;
+    }
+    return this.transport.deleteSession(serial);
+  }
 }
 
 function validateCreateSession(input: CreateSessionInput): CreateSessionInput {

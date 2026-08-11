@@ -29,4 +29,6 @@ export interface SessionTransport {
   updateSessionHeartbeat(phoneNumberId: string): Promise<void>;
   /** Fetch a session by phone_number_id; null when absent. */
   getSessionByPhoneNumberId(phoneNumberId: string): Promise<Session | null>;
+  /** Soft-delete a session by serial. Returns false when it does not exist. */
+  deleteSession(serial: string): Promise<boolean>;
 }

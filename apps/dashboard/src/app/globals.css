@@ -123,6 +123,12 @@
   --font-mono: var(--font-jetbrains-mono);
 }
 
+/* Runtime keyframes used by inline loading indicators. */
+@keyframes nexus-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ── Prefers reduced motion ── */
 /* Components should respect this preference.
    In the components phase, wrap animated elements with:

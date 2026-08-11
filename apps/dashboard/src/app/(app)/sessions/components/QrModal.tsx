@@ -50,7 +50,7 @@ export function QrModal({ open, onClose, serial }: QrModalProps) {
             <div className="flex flex-col items-center gap-2">
               <span
                 className="h-8 w-8 rounded-full border-2 border-accent/30 border-t-accent"
-                style={{ animation: "spin 0.6s linear infinite" }}
+                style={{ animation: "nexus-spin 0.6s linear infinite" }}
               />
               <span className="text-xs text-gray-500">Generating…</span>
             </div>
