@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { clearAuthHeader } from "./auth";
-import { apiGet, apiPost, getApiBaseUrl, normalizeApiError } from "./client";
+import { apiGet, apiPatch, apiPost, getApiBaseUrl, normalizeApiError } from "./client";
 import { ApiError } from "./types";
 
 /** Minimal Response-like object so tests don't depend on the fetch globals. */
@@ -120,6 +120,20 @@ describe("api client", () => {
     });
     expect(init.headers).toBeInstanceOf(Headers);
     expect((init.headers as Headers).get("Authorization")).toBe("Bearer bearer-tok");
+    expect((init.headers as Headers).get("Content-Type")).toBe("application/json");
+  });
+
+  it("PATCHes a JSON body to the given path", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_TOKEN", "bearer-tok");
+    const fetchMock = mockFetch(jsonResponse({ enabled: false, max_retries: 5 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiPatch("/api/v1/webhooks/cfg_1", { enabled: false, max_retries: 5 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/webhooks/cfg_1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ enabled: false, max_retries: 5 });
     expect((init.headers as Headers).get("Content-Type")).toBe("application/json");
   });
 

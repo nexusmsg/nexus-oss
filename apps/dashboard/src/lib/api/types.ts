@@ -70,6 +70,66 @@ export interface SessionsListResponse {
   sessions: Session[];
 }
 
+/**
+ * Webhook config API types. Shapes mirror
+ * `services/api/src/adapters/http/app.ts` (`toWebhookConfigJson`) and the
+ * domain type in `src/lib/api/domain/webhook-config.ts`.
+ */
+
+/** `POST /api/v1/webhooks` request payload. */
+export interface CreateWebhookInput {
+  phone_number_id: string;
+  webhook_url: string;
+  webhook_secret?: string;
+}
+
+/** `PATCH /api/v1/webhooks/:serial` request payload (all fields optional). */
+export interface UpdateWebhookInput {
+  webhook_url?: string;
+  webhook_secret?: string;
+  enabled?: boolean;
+  max_retries?: number;
+  retry_delay_ms?: number;
+  timeout_ms?: number;
+}
+
+/**
+ * A webhook config as returned by the API (snake_case, `serial` = id). The
+ * backend returns `webhook_secret` in plaintext; it is preserved as-is (not
+ * masked or omitted).
+ */
+export interface WebhookConfig {
+  id: number;
+  serial: string;
+  phone_number_id: string;
+  webhook_url: string;
+  webhook_secret: string | null;
+  enabled: boolean;
+  max_retries: number;
+  retry_delay_ms: number;
+  timeout_ms: number;
+  created_at: string;
+}
+
+/** A webhook subscription as returned by the API (snake_case). */
+export interface WebhookSubscription {
+  id: number;
+  serial: string;
+  webhook_config_id: number;
+  event_type: string;
+  created_at: string;
+}
+
+/** `GET /api/v1/webhooks` response envelope. */
+export interface WebhooksListResponse {
+  webhooks: WebhookConfig[];
+}
+
+/** `GET /api/v1/webhooks/:serial/subscriptions` response envelope. */
+export interface SubscriptionsListResponse {
+  subscriptions: WebhookSubscription[];
+}
+
 /** The WABA error envelope body: `{ error: { message, type, code } }`. */
 export interface ApiErrorShape {
   error?: {
