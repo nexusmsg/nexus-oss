@@ -13,7 +13,7 @@
 - **Design source**: `design/dashboard/*.html` (9 Nexus dark theme screens)
 - **Entry**: `src/app/layout.tsx` → `src/app/page.tsx` (playground/verification page)
 - **Components**: `src/components/` — 19 components + icons + barrel export
-- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API, 3001 = PostgREST)
+- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API)
 - **Font**: Inter + JetBrains Mono via `next/font/google`
 
 ## Conventions

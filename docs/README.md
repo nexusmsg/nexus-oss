@@ -23,7 +23,7 @@ account.
 
 | Component | Path | Stack | Docs |
 |-----------|------|-------|------|
-| API | `services/api/` | Node.js, Hono, PostgREST | [services/api](services/api/) |
+| API | `services/api/` | Node.js, Hono, PostgreSQL | [services/api](services/api/) |
 | Worker | `services/worker/` | Go, WhatsMeow, pgx | [services/worker](services/worker/) |
 | DB migrations | `shared/db/migrations/` | SQL, golang-migrate | [services/../shared](shared/) |
 | Frontend | `apps/dashboard/` | React, Vite, TS | [apps](apps/) |

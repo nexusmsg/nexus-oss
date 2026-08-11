@@ -3,9 +3,8 @@
 ## Project Overview
 
 `shared/db/` holds the single source of truth for the database schema:
-golang-migrate SQL migrations consumed by both services (the API reads the
-schema through PostgREST; the worker applies migrations via `cmd/migrate` and
-the Docker `migrate` service).
+golang-migrate SQL migrations consumed by both services; the worker applies
+migrations via `cmd/migrate` and the Docker `migrate` service.
 
 Current migrations (apply order):
 
@@ -38,8 +37,7 @@ file you must rebuild before applying:
 
 ```bash
 docker compose build migrate
-docker compose up -d migrate postgres postgrest
-docker compose restart postgrest   # reload the PostgREST schema cache
+docker compose up -d migrate postgres
 ```
 
 Or apply directly from the worker: `go run ./cmd/migrate -dsn <SUPABASE_DSN>`.

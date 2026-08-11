@@ -29,6 +29,26 @@ This repository is a Turborepo monorepo with three component areas:
   task in every package through Turborepo. The Go worker participates via its
   npm scripts (`go build`, `go run`, `go test`).
 
+## Database Migration Workflow
+
+- The tracked SQL files under `shared/db/migrations/` are the single source of
+  truth for the database schema. Do not apply migrations from an untracked or
+  locally generated directory.
+- The `migrate` service in `docker-compose.yml` uses the worker image's
+  `/app/migrations` directory. `services/worker/Dockerfile` copies the tracked
+  `shared/db/migrations/` directory into that path at image build time.
+- After adding or changing a migration, rebuild and run the migration service
+  before starting dependent services:
+
+  ```bash
+  docker compose build migrate
+  docker compose up -d migrate postgres
+  ```
+
+- Verify migration status through the `migrate` service or the worker migrate
+  CLI; do not run SQL manually against the application database as a substitute
+  for a tracked migration.
+
 ## Go Worker Rules (DEPRECATED)
 
 > Deprecated rule section. Layering and test standards come from the skills:
@@ -45,7 +65,7 @@ Each component area has its own nested rules file — check it before touching
 that area:
 
 - `services/api/AGENTS.md` — Hono API: hexagonal layout, route/auth
-  conventions, PostgREST rules, `npm test` + integration gating.
+  conventions, `npm test` + integration gating.
 - `services/worker/AGENTS.md` — Go worker (see above).
 - `shared/AGENTS.md` — DB migrations: file conventions, idempotency, Docker
   rebuild requirement, doc sync.

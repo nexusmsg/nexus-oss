@@ -20,7 +20,7 @@ configs, and API keys.
 - **Entry**: `src/app/layout.tsx` → `src/app/page.tsx` (playground/verification page)
 - **Components**: `src/components/` — 19 components + icons + barrel export
 - **Fonts**: Inter + JetBrains Mono via `next/font/google`
-- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API, 3001 = PostgREST)
+- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API)
 - **Icons**: Hand-ported SVG set at `src/components/icons/index.tsx` (do NOT add lucide-react)
 
 #### Design Tokens

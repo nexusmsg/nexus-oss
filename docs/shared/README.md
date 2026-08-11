@@ -13,6 +13,7 @@ SQL migrations in golang-migrate format, shared by both services (applied via
 | `000003_create_sessions` | `sessions` (status check, whatsapp_id, connection timestamps) + `session_qr_codes` (FK cascade, qr_code, status, expires_at) |
 | `000004_webhook_management` | `webhook_configs` += enabled, max_retries, retry_delay_ms, timeout_ms; `webhook_subscriptions` (config FK, event_type, unique pair) + seed `messages` for existing configs |
 | `000005_add_business_account_id_to_sessions` | `sessions.business_account_id` (text, default `''`) |
+| `000009_allow_reuse_deleted_session_phone_number` | `sessions.phone_number_id` unique only for active sessions: drops the full unique constraint `sessions_phone_number_id_key` and adds partial unique index `sessions_phone_number_id_active_idx` (`where deleted_at is null`) so a deleted session's phone number can be reused |
 
 ## Working with migrations
 
@@ -20,8 +21,7 @@ SQL migrations in golang-migrate format, shared by both services (applied via
   migration file you must rebuild before applying:
   ```bash
   docker compose build migrate
-  docker compose up -d migrate postgres postgrest
-  docker compose restart postgrest   # reload PostgREST schema cache
+  docker compose up -d migrate postgres
   ```
 - Apply via the worker CLI: `go run ./cmd/migrate -dsn <SUPABASE_DSN>`.
 - `down` migrations exist for local dev rollback; production rollback is

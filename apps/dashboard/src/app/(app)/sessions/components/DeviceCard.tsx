@@ -196,7 +196,7 @@ export function DeviceCard({
             Reconnect
           </Button>
         )}
-        {session.status === "logged_out" && (
+        {(session.status === "created" || session.status === "disconnected" || session.status === "logged_out") && (
           <Button variant="danger" size="sm" className="flex-1 justify-center" onClick={() => onDelete?.(session.id)}>
             Delete
           </Button>

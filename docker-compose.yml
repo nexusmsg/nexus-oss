@@ -6,7 +6,7 @@ x-worker-env: &worker-env
   WHATSMEOW_STORE_DSN: ""
   MIGRATIONS_DIR: /app/migrations
   POLL_INTERVAL: "1s"
-  API_URL: http://api:3000
+  API_URL: http://dashboard:3000
   INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
   MAX_ATTEMPTS: "3"
   WEBHOOK_CONFIG_TTL: "30s"
@@ -30,21 +30,6 @@ services:
       timeout: 3s
       retries: 10
 
-  postgrest:
-    image: postgrest/postgrest
-    environment:
-      PGRST_DB_URI: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba?sslmode=disable
-      PGRST_DB_SCHEMAS: public
-      PGRST_DB_ANON_ROLE: postgres
-      PGRST_JWT_SECRET: ${PGRST_JWT_SECRET:-dev-jwt-secret-dev-only-0123456789abcdef}
-    ports:
-      - "3001:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-
   migrate:
     build:
       context: .
@@ -61,27 +46,22 @@ services:
       postgres:
         condition: service_healthy
 
-  api:
+  dashboard:
     build:
       context: .
-      dockerfile: services/api/Dockerfile
+      dockerfile: apps/dashboard/Dockerfile
     environment:
       PORT: "3000"
-      SUPABASE_URL: http://postgrest:3000
-      # Dev keys are HS256 JWTs (role: postgres) signed with PGRST_JWT_SECRET;
-      # PostgREST rejects plain-string bearer tokens (PGRST301).
-      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoicG9zdGdyZXMifQ.d4y_K_hxLZpO3fNZxeZqabxMtleGVqtL44GxxPprm5A}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoicG9zdGdyZXMifQ.d4y_K_hxLZpO3fNZxeZqabxMtleGVqtL44GxxPprm5A}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/waba
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3002}
+      NEXT_PUBLIC_API_TOKEN: ${API_AUTH_TOKEN:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
-      postgrest:
-        condition: service_started
       migrate:
         condition: service_completed_successfully
 

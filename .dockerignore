@@ -8,7 +8,6 @@ node_modules
 **/.turbo
 **/dist
 services/worker/bin
-apps
 .env
 .env.local
 *.db

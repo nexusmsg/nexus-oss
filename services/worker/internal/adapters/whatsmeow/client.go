@@ -119,6 +119,9 @@ func (c *Client) Logout(ctx context.Context) error {
 		return errors.New("whatsmeow: client is nil")
 	}
 	if err := c.client.Logout(ctx); err != nil {
+		if errors.Is(err, whatsmeow.ErrNotLoggedIn) {
+			return nil
+		}
 		return fmt.Errorf("whatsmeow: logout: %w", err)
 	}
 	return nil

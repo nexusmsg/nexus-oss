@@ -98,8 +98,8 @@ API configuration (env): `PORT`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 
 ## Local End-to-End Test
 
-1. `docker compose up --build -d` from the repo root (Postgres, PostgREST,
-   migrations, API, worker).
+1. `docker compose up --build -d` from the repo root (Postgres, migrations, API,
+   worker).
 2. Provision devices in the `sessions` table (via the API) and recreate the
    API + worker:
    ```bash
