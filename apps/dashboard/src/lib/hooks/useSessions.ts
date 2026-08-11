@@ -3,9 +3,12 @@
 /* ── Sessions list hook + status poll helper ──
  *
  * `useSessions` loads the session list and exposes a manual `refresh`.
- * `pollStatus` is the small helper the logout flow uses: poll
- * `GET /sessions/:serial/status` every 3s until a target status (or timeout).
- * No data-library dependency — plain state/effects with unmount guarding.
+ * `pollStatus` is the bounded, abort-aware helper the logout flow (and,
+ * after QR pairing, the "wait for `connected`" step) uses: poll
+ * `GET /sessions/:serial/status` every 3s until a target status (or timeout),
+ * and stop promptly when the caller's `AbortSignal` fires so no poll loop
+ * outlives its component. No data-library dependency — plain state/effects
+ * with unmount guarding.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,35 +25,73 @@ export interface UseSessionsReturn {
     serial: string,
     until: SessionStatus,
     timeoutMs?: number,
+    signal?: AbortSignal,
   ) => Promise<SessionStatus>;
 }
 
 const POLL_INTERVAL_MS = 3_000;
 const STATUS_POLL_TIMEOUT_MS = 15_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Standard AbortError, matching what fetch throws on abort. */
+function abortError(): DOMException {
+  return new DOMException("Aborted", "AbortError");
 }
 
 /**
- * Poll `GET /sessions/:serial/status` until `until`, polling every 3s.
- * Resolves with the reached status; rejects with `ApiError` when the
- * `timeoutMs` deadline passes without reaching it.
+ * `setTimeout` that resolves after `ms` — unless `signal` fires first, in
+ * which case it rejects immediately with an `AbortError`. This is what makes
+ * the poll loop cancellable mid-sleep: no wait-out of a pending interval.
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Bounded poll of `GET /sessions/:serial/status` until `until`, every ~3s.
+ * Resolves with the reached status. Rejects with `ApiError` when the
+ * `timeoutMs` deadline passes without reaching it, or with an `AbortError`
+ * when `signal` fires — the signal is threaded into every status fetch and
+ * into the sleeps, so cleanup is prompt even mid-sleep / mid-request.
+ *
+ * Backward compatible with the original `(serial, until, timeoutMs)` shape;
+ * `signal` is an additive, optional fourth argument.
  */
 export async function pollStatus(
   serial: string,
   until: SessionStatus,
   timeoutMs: number = STATUS_POLL_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<SessionStatus> {
+  if (signal?.aborted) throw abortError();
   const deadline = Date.now() + timeoutMs;
   // Keep the poll cadence sane relative to short test timeouts.
   const intervalMs = Math.min(POLL_INTERVAL_MS, Math.max(250, timeoutMs / 3));
 
   for (;;) {
+    if (signal?.aborted) throw abortError();
+
     let status: SessionStatus;
     try {
-      status = await getSessionStatus(serial);
+      status = signal
+        ? await getSessionStatus(serial, { signal })
+        : await getSessionStatus(serial);
     } catch {
+      // Abort wins over any in-flight request error — stop, don't retry.
+      if (signal?.aborted) throw abortError();
       // Transient request error — keep polling until the deadline.
       if (Date.now() >= deadline) {
         throw new ApiError(
@@ -58,7 +99,7 @@ export async function pollStatus(
           `Timed out after ${timeoutMs}ms waiting for session status "${until}"`,
         );
       }
-      await sleep(intervalMs);
+      await sleep(intervalMs, signal);
       continue;
     }
 
@@ -70,7 +111,7 @@ export async function pollStatus(
         `Timed out after ${timeoutMs}ms waiting for session status "${until}"`,
       );
     }
-    await sleep(intervalMs);
+    await sleep(intervalMs, signal);
   }
 }
 

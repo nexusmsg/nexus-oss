@@ -158,4 +158,89 @@ describe("pollStatus", () => {
     await expect(pending).resolves.toBe("logged_out");
     expect(mockedStatus).toHaveBeenCalledTimes(3);
   });
+
+  it("rejects immediately with AbortError when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      pollStatus("ses_1", "connected", 1000, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockedStatus).not.toHaveBeenCalled();
+  });
+
+  it("threads the AbortSignal into every status fetch", async () => {
+    vi.useFakeTimers();
+    mockedStatus.mockResolvedValue("connected"); // target reached on first poll
+
+    const controller = new AbortController();
+    await expect(
+      pollStatus("ses_1", "connected", 10000, controller.signal),
+    ).resolves.toBe("connected");
+    expect(mockedStatus).toHaveBeenCalledWith("ses_1", {
+      signal: controller.signal,
+    });
+  });
+
+  it("stops polling and rejects with AbortError when aborted mid-poll", async () => {
+    vi.useFakeTimers();
+    mockedStatus.mockResolvedValue("pairing"); // never reaches target
+
+    const controller = new AbortController();
+    const pending = pollStatus("ses_1", "connected", 10000, controller.signal);
+    pending.catch(() => undefined);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    const pollsBefore = mockedStatus.mock.calls.length;
+    expect(pollsBefore).toBeGreaterThanOrEqual(1);
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockedStatus.mock.calls.length).toBe(pollsBefore);
+  });
+
+  it("aborting during a pending sleep wakes promptly without waiting the interval", async () => {
+    vi.useFakeTimers();
+    mockedStatus.mockResolvedValue("pairing");
+
+    const controller = new AbortController();
+    const pending = pollStatus("ses_1", "connected", 10000, controller.signal);
+    pending.catch(() => undefined);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0); // first fetch resolves → sleep starts
+    });
+    const pollsBefore = mockedStatus.mock.calls.length;
+
+    // No timer advance — the abort alone must reject the pending sleep.
+    controller.abort();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockedStatus.mock.calls.length).toBe(pollsBefore);
+  });
+
+  it("abort wins over transient request errors (no retry after abort)", async () => {
+    vi.useFakeTimers();
+    mockedStatus.mockRejectedValueOnce(new Error("network down"));
+
+    const controller = new AbortController();
+    const pending = pollStatus("ses_1", "connected", 10000, controller.signal);
+    pending.catch(() => undefined);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0); // first fetch rejects → sleep starts
+    });
+    const pollsBefore = mockedStatus.mock.calls.length;
+
+    controller.abort();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockedStatus.mock.calls.length).toBe(pollsBefore);
+  });
 });

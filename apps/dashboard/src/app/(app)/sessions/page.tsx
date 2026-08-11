@@ -95,6 +95,10 @@ export default function SessionsPage() {
     }
   }, [deleteMode, deleteSerial, pollStatus, refresh, sessions]);
 
+  const handleQrConnected = useCallback(() => {
+    refresh();
+  }, [refresh]);
+
   const handleCreated = useCallback(() => {
     refresh();
   }, [refresh]);
@@ -186,7 +190,12 @@ export default function SessionsPage() {
       />
 
       {/* QR Modal */}
-      <QrModal open={qrOpen} onClose={() => setQrOpen(false)} serial={qrSerial} />
+      <QrModal
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
+        serial={qrSerial}
+        onConnected={handleQrConnected}
+      />
 
       {/* Logout Confirm Dialog */}
       <Modal
