@@ -5,8 +5,9 @@
 
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import * as schema from "@shared/db/schema";
 
-let db: PostgresJsDatabase | null = null;
+let db: PostgresJsDatabase<typeof schema> | null = null;
 
 export function getDb() {
   if (!db) {
@@ -14,9 +15,9 @@ export function getDb() {
     if (!databaseUrl) {
       throw new Error("DATABASE_URL is not set");
     }
-    // Import schema lazily to avoid circular deps
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { default: schema } = require("@shared/db/schema");
+    // The schema is pure table definitions (no side effects, no connection),
+    // so importing it eagerly here is safe; the DB connection itself stays
+    // lazy and is only opened on the first getDb() call.
     db = drizzle(postgres(databaseUrl, { max: 10 }), { schema });
   }
   return db;

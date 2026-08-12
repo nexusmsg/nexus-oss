@@ -20,7 +20,7 @@ configs, and API keys.
 - **Entry**: `src/app/layout.tsx` → `src/app/page.tsx` (playground/verification page)
 - **Components**: `src/components/` — 19 components + icons + barrel export
 - **Fonts**: Inter + JetBrains Mono via `next/font/google`
-- **Dev server**: `next dev -p 3002` (port 3002; 3000 = API)
+- **Dev server**: `next dev` (default port 3000; hosts both the UI and the API route handlers)
 - **Icons**: Hand-ported SVG set at `src/components/icons/index.tsx` (do NOT add lucide-react)
 
 #### Design Tokens
@@ -50,6 +50,23 @@ Single `/` route serves as verification surface for all components:
 - 13 card sections covering all components in all states
 - Interactive demos: modal open/close, toggle, API key reveal/copy, expandable rows, form validation, password strength
 - App shell with Sidebar + Topbar for realistic context
+
+#### API Surface
+
+The dashboard hosts the **active API**: Next.js route handlers under
+`src/app/api/` backed by Drizzle/Postgres (`src/lib/api/` — hexagonal layout
+with domain/ports/services/adapters and a `compose.ts` composition root).
+
+- **Public `/api/v1/*`** routes (sessions, webhooks, api-keys) accept either
+  the bootstrap `API_AUTH_TOKEN` or a persisted API key (`waba_…`, SHA-256
+  hash lookup, `read`/`write`/`full` scope mapping; empty bootstrap token
+  closes all public routes).
+- **API-key management** (`/api/v1/api-keys/**`) is bootstrap-only — persisted
+  keys can never list, create, rename, or revoke other keys. The plaintext
+  secret is returned exactly once at creation.
+- **`/internal/*`** routes accept only `INTERNAL_TOKEN` (strictly isolated).
+- See [`docs/services/api/`](../services/api/) for the endpoint and
+  architecture documentation. The worker has no API-key changes.
 
 #### Current Status
 

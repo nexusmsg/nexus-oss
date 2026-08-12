@@ -53,18 +53,64 @@ HTTP client ──► adapters/http (Hono app, auth)
 
 ## Auth model
 
-- `API_AUTH_TOKEN` on public WABA routes (`/:phone_number_id/messages`) and
-  `/api/v1/*`; accepted as `Authorization: Bearer <token>` **or**
-  `Authorization: Basic base64(<user>:<token>)` against the same secret
-  (`adapters/http/auth.ts`). Username free-form; password must equal the
-  token. Bearer takes precedence when both schemes are present. Empty string
-  disables auth for both.
-- Auth failures return `401` with `WWW-Authenticate: Basic realm="nexus"` so
-  browser-native Basic Auth (and reverse proxies) can drive the prompt.
-- `INTERNAL_TOKEN` (Bearer) on `/internal/*` routes; empty string disables
-  them (logged at app creation).
-- Dev keys are HS256 JWTs (`{"role":"postgres"}`) signed with
-  `PGRST_JWT_SECRET` — PostgREST rejects plain-string bearer tokens (PGRST301).
+The active API lives in the dashboard as Next.js route handlers
+(`apps/dashboard/src/app/api/`, `src/lib/api/server-auth.ts`). Public
+`/api/v1/*` routes accept **two credential classes**, both via
+`Authorization: Bearer <credential>`:
+
+- **Bootstrap `API_AUTH_TOKEN`** — compared in constant time (`safeEqual`:
+  both sides SHA-256 hashed, digests compared with `timingSafeEqual`).
+  Bypasses scope checks and is the only credential authorized on the
+  bootstrap-only API-key management routes.
+- **Persisted API keys** — `waba_…` credentials resolved asynchronously by
+  SHA-256 hash lookup of the full secret (`getKeyByHash`). Unknown, revoked,
+  soft-deleted, and expired keys are rejected; the route's `requiredScope`
+  (`read` for GET, `write` for POST/PATCH/DELETE; `full` grants both) is
+  enforced. A successful persisted-key auth triggers a best-effort, throttled
+  `last_used_at` update (at most once per key per five minutes) that is
+  non-blocking and never fails the request. Management routes omit the
+  persisted-key accessor entirely, so persisted keys never authorize them and
+  no hash lookup is attempted.
+
+When `API_AUTH_TOKEN` is empty, every public route is closed: neither the
+bootstrap token nor persisted keys are accepted. Auth failures return the
+WABA 401 envelope `{ error: { code: 401, ... } }`.
+
+`INTERNAL_TOKEN` on `/internal/*` routes is **strictly isolated**:
+`authorizeInternal` accepts only `INTERNAL_TOKEN` (constant-time comparison);
+bootstrap and persisted credentials never authorize internal routes. Empty
+string disables them (401).
+
+## API keys
+
+API-key CRUD is implemented in the dashboard (`src/lib/api/domain/api-key.ts`,
+`service/api-key-management.ts`, `ports/api-key-transport.ts`, the
+`ApiKeyTransport` slice of `DrizzleTransport`, and the
+`/api/v1/api-keys/**` route handlers). The `api_keys` table comes from
+migration `000011_create_api_keys`, mirrored in `shared/db/schema.ts`.
+
+- **Key format**: `waba_<environment>_<random-secret>`, where the random
+  secret is at least 32 CSPRNG bytes (`randomBytes`) hex-encoded (64 hex
+  chars). `<environment>` comes from `API_KEY_ENV` → `NODE_ENV` → `dev`,
+  normalized to `[a-z0-9-]`.
+- **Storage**: only a SHA-256 hex digest of the full secret (`key_hash`,
+  unique index for constant-time lookup) and a non-secret display prefix
+  (`key_prefix`) are persisted. The plaintext secret is returned exactly once
+  from `POST /api/v1/api-keys` and is never stored, logged, or recoverable.
+- **Bootstrap-only management**: `/api/v1/api-keys/**` (list, create, get,
+  rename/scope/expiry, revoke) is authorized only by `API_AUTH_TOKEN`;
+  persisted keys can never manage keys.
+- **Expiry / revocation**: an `expires_at` in the past rejects the credential;
+  `DELETE` maps to `revokeKey` (`status = 'revoked'`, never hard-deleted);
+  soft-deleted rows (`deleted_at` set) are excluded from hash lookup and
+  management reads.
+- **`last_used_at` throttling**: updated only after successful persisted-key
+  auth, at most once per key per five minutes (`LAST_USED_THROTTLE_MS`). The
+  authorizer skips the write inside the window and the adapter's conditional
+  `UPDATE` (live, non-expired rows only) is a race-safety backstop. Never
+  updated for failed, expired, or revoked credentials.
+- **Scope matrix**: GET routes require `read`, POST/PATCH/DELETE require
+  `write`, `full` grants both, bootstrap bypasses all checks.
 
 ## CORS
 

@@ -15,6 +15,7 @@ SQL migrations in golang-migrate format, shared by both services (applied via
 | `000005_add_business_account_id_to_sessions` | `sessions.business_account_id` (text, default `''`) |
 | `000009_allow_reuse_deleted_session_phone_number` | `sessions.phone_number_id` unique only for active sessions: drops the full unique constraint `sessions_phone_number_id_key` and adds partial unique index `sessions_phone_number_id_active_idx` (`where deleted_at is null`) so a deleted session's phone number can be reused |
 | `000010_allow_reuse_deleted_webhook_config_phone_number` | `webhook_configs.phone_number_id` unique only for active configs: drops the full unique constraint `webhook_configs_phone_number_id_key` and adds partial unique index `webhook_configs_phone_number_id_active_idx` (`where deleted_at is null`) so a deleted config's phone number can be reused |
+| `000011_create_api_keys` | `api_keys` (serial PK, name, key_prefix, key_hash unique index, scope `read`/`write`/`full` check, status `active`/`revoked` check, expires_at, last_used_at, timestamps, deleted_at) — global Bearer credentials for the dashboard API; stores only a SHA-256 hex digest of the full secret plus a non-secret display prefix; `set_updated_at()` trigger; `api_keys_status_idx` partial index (`where deleted_at is null`) |
 
 ## Working with migrations
 
@@ -33,6 +34,7 @@ SQL migrations in golang-migrate format, shared by both services (applied via
 - New migrations: monotonic `NNNNNN` prefix, idempotent `up` (`if not exists`),
   matching `.down`.
 - Never edit an applied migration; add a new one.
-- Schema changes must be mirrored in the API transport
-  (`services/api/src/adapters/supabase/`), the worker queue/session stores
+- Schema changes must be mirrored in the API Drizzle schema
+  (`shared/db/schema.ts`, consumed by the dashboard route handlers in
+  `apps/dashboard/src/lib/api/adapters/db/`), the worker queue/session stores
   (`services/worker/internal/adapters/queue/`), and this doc.

@@ -13,6 +13,19 @@ WhatsApp message gateway, split into two binaries that communicate through the
 
 Path: `services/worker/`
 
+## API keys — no worker changes
+
+The API-key feature lives entirely in the dashboard API
+(`apps/dashboard/src/app/api/v1/api-keys/**`, Drizzle transport, migration
+`000011_create_api_keys`). The worker has **no** API-key changes:
+
+- It does not read the `api_keys` table and has no dependency on it.
+- Its `INTERNAL_TOKEN`-gated routes (`GET /internal/v1/webhook-config`,
+  `POST /internal/v1/heartbeat`) and `INTERNAL_TOKEN` behavior are unchanged;
+  bootstrap tokens and persisted API keys never authorize them.
+- No worker code, queue, or session-store changes were introduced by the
+  feature.
+
 ## Sections
 
 | Section | Content |

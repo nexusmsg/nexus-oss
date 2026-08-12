@@ -1,23 +1,25 @@
 # API — Endpoints
 
-Base URL: `{{base_url}}` (default `http://localhost:3000`).
+The active API is hosted in the dashboard app as Next.js route handlers under
+`apps/dashboard/src/app/api/` (Drizzle/Postgres backing). Base URL:
+`{{base_url}}` (dashboard API default `http://localhost:3000`).
 
 ## Health
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | `{"ok": true, "service": "api"}` |
+| GET | `/` | `{"ok": true, "service": "api"}` (legacy Hono surface; the dashboard serves its UI at `/`) |
 
-## Public WABA surface (auth: Bearer or Basic `API_AUTH_TOKEN`)
+## Public WABA surface (auth: Bearer `API_AUTH_TOKEN`)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/:phone_number_id/messages` | Send message: enqueue + poll → WABA envelope with `wamid`, or WABA error (504 on timeout) |
 
-Auth accepts `Authorization: Bearer <API_AUTH_TOKEN>` or
-`Authorization: Basic base64(<user>:<API_AUTH_TOKEN>)` against the same
-secret; failures return `401` with `WWW-Authenticate: Basic realm="nexus"`.
-Empty `API_AUTH_TOKEN` disables auth for both schemes.
+Auth accepts `Authorization: Bearer <credential>`; the credential is either
+the bootstrap `API_AUTH_TOKEN` or a persisted API key (`waba_…`, resolved by
+SHA-256 hash — see "API key management" and "Persisted-key authentication"
+below). Failures return the WABA 401 envelope.
 
 ## Session lifecycle (`/api/v1`)
 
@@ -48,6 +50,50 @@ Session JSON shape: `id` (serial), `phone_number_id`, `number`,
 | POST | `/webhooks/:serial/subscriptions` | Add subscription; body `{ event_type }` → 201 (idempotent) |
 | DELETE | `/webhooks/:serial/subscriptions/:eventType` | Remove subscription → 200 `{ ok }` |
 
+## API key management (`/api/v1`) — bootstrap-only
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/api-keys` | List keys (redacted records, newest first) |
+| POST | `/api/v1/api-keys` | Create key; body `{ name, scope, expires_at? }` (`scope`: `read`/`write`/`full`) → 201 `{ key, secret }`. The plaintext `secret` is returned **only** here, exactly once |
+| GET | `/api/v1/api-keys/:serial` | Get key (redacted); 404 if absent |
+| PATCH | `/api/v1/api-keys/:serial` | Update `{ name?, scope?, expires_at? }`; `expires_at: null` clears expiry; 404 if absent |
+| DELETE | `/api/v1/api-keys/:serial` | Revoke key → 200 `{ ok }`; keys are revoked, never hard-deleted; 404 if absent |
+
+Management routes are authorized **only** by the bootstrap `API_AUTH_TOKEN`
+(Bearer). Persisted API keys can never list, create, update, or revoke other
+keys — they get the WABA 401 envelope and no hash lookup is attempted.
+
+Redacted key JSON: `{ serial, name, key_prefix, scope, status, expires_at,
+last_used_at, created_at, updated_at }`. It never contains the secret or its
+SHA-256 digest. `status` is `active` or `revoked`.
+
+Key format: `waba_<environment>_<64 hex chars>` (256 bits of CSPRNG entropy;
+`<environment>` from `API_KEY_ENV` → `NODE_ENV` → `dev`, normalized to
+`[a-z0-9-]`). Only the SHA-256 hex digest of the full secret and the
+non-secret `waba_<environment>_` display prefix are persisted; the plaintext
+secret is never stored, logged, or recoverable.
+
+## Persisted-key authentication (public `/api/v1` routes)
+
+Public `/api/v1` routes accept either credential class via
+`Authorization: Bearer <credential>`:
+
+- the bootstrap `API_AUTH_TOKEN` — constant-time comparison, bypasses scope;
+- a persisted API key — resolved asynchronously by SHA-256 hash lookup of the
+  full credential. Unknown, revoked, soft-deleted, and expired keys are
+  rejected.
+
+Scope mapping: GET routes require `read`; POST/PATCH/DELETE require `write`;
+`full` grants both. Bootstrap auth bypasses scope checks. A successful
+persisted-key auth triggers a best-effort, throttled `last_used_at` update (at
+most once per key per five minutes) that is non-blocking and never fails the
+request. `last_used_at` is never updated for failed, expired, or revoked
+credentials.
+
+When `API_AUTH_TOKEN` is empty, every public route is closed — neither the
+bootstrap token nor persisted keys are accepted.
+
 ## CORS
 
 `/api/v1/*` answers cross-origin browser calls (the dashboard calls the API
@@ -63,3 +109,9 @@ credentials.
 | GET | `/internal/v1/webhook-config?phone_number_id=...` | `{ webhook_url, webhook_secret }`; 404 when absent |
 | POST | `/internal/v1/heartbeat` | Body `{ phone_number_id }` → refresh `last_seen_at` → 200 `{ ok }` |
 | GET | `/internal/webhook-config?phone_number_id=...` | Legacy alias of the v1 route |
+
+Strict isolation: `/internal/*` accepts **only** `INTERNAL_TOKEN`
+(constant-time comparison). Neither the bootstrap `API_AUTH_TOKEN` nor
+persisted API keys ever authorize internal routes; the routes are disabled
+(401) when the token is unset. The worker's outbound calls are unaffected —
+it has no API-key changes.
