@@ -7,9 +7,12 @@
  * filter, and the seven-column table (Name, Key, Scope, Created, Last Used,
  * Status, Actions).
  *
- * Scope boundaries (UI-2):
- * - Generate Key and the row action buttons are non-functional placeholders;
- *   reveal/copy, generate, rename, and revoke behaviors land in UI-3–UI-5.
+ * Scope boundaries:
+ * - UI-2: Generate Key and the row action buttons are static placeholders.
+ * - UI-3: Reveal/Copy are permanently unavailable for existing rows — the
+ *   plaintext secret is never persisted, so they carry an explanatory disabled
+ *   affordance (tooltip/title/aria-disabled) instead of pretending a value
+ *   exists. Rename/Revoke remain placeholders until UI-5.
  * - The Key cell shows the redacted prefix with a decorative mask; the
  *   plaintext secret never reaches the client (the management API returns
  *   only `key_prefix`).
@@ -139,42 +142,68 @@ function ScopeBadge({ scope }: { scope: ApiKeyScope }) {
   return <Badge variant={SCOPE_VARIANT[scope]}>{scope}</Badge>;
 }
 
-/* ── Non-functional row actions (UI-3–UI-5 wire these up) ── */
+/* ── Row actions ──
+ *
+ * Security invariant: existing keys are unrecoverable. The management API
+ * persists only a SHA-256 hash plus a display prefix, so Reveal/Copy can never
+ * act on a real plaintext value. The buttons stay visible for layout parity but
+ * render as disabled affordances whose tooltip/title explain why. Rename/Revoke
+ * remain placeholders until UI-5 wires up the modal flows.
+ */
+
+/** Shared reason used by the Reveal/Copy explanatory affordances. */
+const SECRET_NOT_RECOVERABLE =
+  "the full secret isn't stored after creation and can't be recovered";
+
+interface KeyAction {
+  label: string;
+  icon: React.ReactNode;
+  danger?: boolean;
+  /** Tooltip/title text; when set, replaces the plain action label. */
+  explanation?: string;
+}
+
+function RowAction({ name, action }: { name: string; action: KeyAction }) {
+  const hint = action.explanation ?? action.label;
+  return (
+    <Tooltip content={hint}>
+      <Button
+        type="button"
+        variant="icon"
+        size="sm"
+        title={hint}
+        aria-label={`${action.label} ${name}`}
+        aria-disabled="true"
+        className={cx(
+          action.danger &&
+            "border-danger/60 text-danger hover:border-danger hover:text-danger hover:bg-danger/10",
+        )}
+      >
+        {action.icon}
+      </Button>
+    </Tooltip>
+  );
+}
 
 function KeyActions({ name }: { name: string }) {
-  const actions: {
-    label: string;
-    icon: React.ReactNode;
-    danger: boolean;
-  }[] = [
-    { label: "Reveal", icon: <IconEye size={13} />, danger: false },
-    { label: "Copy", icon: <IconCopy size={13} />, danger: false },
-    { label: "Rename", icon: <IconEdit size={13} />, danger: false },
+  const actions: KeyAction[] = [
     {
-      label: "Revoke",
-      icon: <IconTrash size={13} />,
-      danger: true,
+      label: "Reveal",
+      icon: <IconEye size={13} />,
+      explanation: `Nothing to reveal — ${SECRET_NOT_RECOVERABLE}.`,
     },
+    {
+      label: "Copy",
+      icon: <IconCopy size={13} />,
+      explanation: `Nothing to copy — ${SECRET_NOT_RECOVERABLE}.`,
+    },
+    { label: "Rename", icon: <IconEdit size={13} /> },
+    { label: "Revoke", icon: <IconTrash size={13} />, danger: true },
   ];
   return (
     <div className="flex items-center gap-1">
       {actions.map((action) => (
-        <Tooltip key={action.label} content={action.label}>
-          <Button
-            type="button"
-            variant="icon"
-            size="sm"
-            title={action.label}
-            aria-label={`${action.label} ${name}`}
-            aria-disabled="true"
-            className={cx(
-              action.danger &&
-                "border-danger/60 text-danger hover:border-danger hover:text-danger hover:bg-danger/10",
-            )}
-          >
-            {action.icon}
-          </Button>
-        </Tooltip>
+        <RowAction key={action.label} name={name} action={action} />
       ))}
     </div>
   );

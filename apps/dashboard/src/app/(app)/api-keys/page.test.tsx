@@ -201,3 +201,75 @@ describe("ApiKeysPage (UI-2 static composition)", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ApiKeysPage (UI-3 secure visibility)", () => {
+  it("marks Reveal/Copy as unavailable with a secure explanation and keeps Rename/Revoke placeholders", () => {
+    mockUseApiKeys([makeKey({ name: "Production" })]);
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Production/ });
+    const reveal = within(row).getByRole("button", {
+      name: "Reveal Production",
+    });
+    const copy = within(row).getByRole("button", {
+      name: "Copy Production",
+    });
+    const rename = within(row).getByRole("button", {
+      name: "Rename Production",
+    });
+    const revoke = within(row).getByRole("button", {
+      name: "Revoke Production",
+    });
+
+    // Every existing-key action stays a disabled affordance.
+    for (const btn of [reveal, copy, rename, revoke]) {
+      expect(btn.getAttribute("aria-disabled")).toBe("true");
+    }
+
+    // Reveal/Copy explain why there is nothing to show or copy.
+    expect(reveal.getAttribute("title")).toContain("Nothing to reveal");
+    expect(reveal.getAttribute("title")).toContain("secret isn't stored");
+    expect(copy.getAttribute("title")).toContain("Nothing to copy");
+    expect(copy.getAttribute("title")).toContain("secret isn't stored");
+
+    // The explanatory tooltips are present in the DOM (CSS-only, always mounted).
+    expect(screen.getAllByRole("tooltip").length).toBeGreaterThanOrEqual(4);
+    expect(
+      screen.getByRole("tooltip", { name: /Nothing to reveal/ }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("tooltip", { name: /Nothing to copy/ }),
+    ).toBeTruthy();
+
+    // Rename/Revoke keep their plain placeholder labels for later phases.
+    expect(rename.getAttribute("title")).toBe("Rename");
+    expect(revoke.getAttribute("title")).toBe("Revoke");
+  });
+
+  it("never reveals a plaintext secret or copies it to the clipboard for existing keys", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    mockUseApiKeys([makeKey({ name: "Production", key_prefix: "waba_prod_" })]);
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Production/ });
+    const maskedCell = within(row).getByText(/^waba_prod_/);
+    const maskedText = maskedCell.textContent;
+
+    // Clicking Copy never touches the clipboard.
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Copy Production" }),
+    );
+    expect(writeText).not.toHaveBeenCalled();
+
+    // Clicking Reveal never surfaces a plaintext secret — the cell stays masked.
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Reveal Production" }),
+    );
+    expect(within(row).getByText(/^waba_prod_/).textContent).toBe(maskedText);
+  });
+});
