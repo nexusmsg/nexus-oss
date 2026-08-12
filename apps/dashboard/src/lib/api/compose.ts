@@ -20,6 +20,7 @@ import type { SendMessagePort } from "./ports/send-message";
 import type { SessionServicePort } from "./ports/session-service";
 import type { WebhookConfigProvider } from "./ports/webhook-config-provider";
 import type { WebhookConfigManagementServicePort } from "./service/webhook-config-management";
+import type { ApiKeyAuthPort } from "./server-auth";
 
 export interface WiredServices {
   sessionService: SessionServicePort;
@@ -28,6 +29,8 @@ export interface WiredServices {
   sendMessage: SendMessagePort;
   webhookTest: TestWebhookServicePort;
   apiKeys: ApiKeyManagementServicePort;
+  /** Persisted-key lookup + throttled last-used tracking for the public authorizer (API-5b). */
+  apiKeyAuth: ApiKeyAuthPort;
   config: Config;
 }
 
@@ -61,6 +64,10 @@ export function composeServices(config: Config): WiredServices {
 
   const apiKeys: ApiKeyManagementServicePort = new ApiKeyManagementService(transport);
 
+  // The transport satisfies the authorizer's persisted-key port structurally
+  // (getKeyByHash + touchKeyLastUsed); expose only that slice.
+  const apiKeyAuth: ApiKeyAuthPort = transport;
+
   return {
     sessionService,
     webhookConfig,
@@ -68,6 +75,7 @@ export function composeServices(config: Config): WiredServices {
     sendMessage,
     webhookTest,
     apiKeys,
+    apiKeyAuth,
     config,
   };
 }

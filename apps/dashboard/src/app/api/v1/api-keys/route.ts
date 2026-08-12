@@ -44,7 +44,7 @@ function toApiKeyJson(key: RedactedApiKey) {
 
 export async function GET(req: NextRequest) {
   const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken))) {
+  if (!(await authorizeApi(req, config.apiAuthToken, { requiredScope: "read" }))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken))) {
+  if (!(await authorizeApi(req, config.apiAuthToken, { requiredScope: "write" }))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 

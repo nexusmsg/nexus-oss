@@ -37,3 +37,11 @@ export interface CreateApiKeyInput {
   /** Null = key never expires. */
   expiresAt?: string | null;
 }
+
+/**
+ * Throttle window for the best-effort `last_used_at` update that follows a
+ * successful persisted-key authentication: at most one update per key per
+ * five minutes (API-5b). Enforced by the authorizer and mirrored by the
+ * Drizzle adapter's conditional UPDATE so concurrent requests cannot bypass it.
+ */
+export const LAST_USED_THROTTLE_MS = 5 * 60 * 1000;

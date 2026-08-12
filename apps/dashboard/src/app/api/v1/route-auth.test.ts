@@ -27,10 +27,13 @@ import * as webhookSerial from "./webhooks/[serial]/route";
 import * as subscriptions from "./webhooks/[serial]/subscriptions/route";
 import * as subscriptionEvent from "./webhooks/[serial]/subscriptions/[eventType]/route";
 import * as webhookTest from "./webhooks/[serial]/test/route";
+import type { ApiKey } from "@/lib/api/domain/api-key";
 
 const mocks = vi.hoisted(() => ({
   composeServices: vi.fn(),
   loadConfig: vi.fn(),
+  getKeyByHash: vi.fn(),
+  touchKeyLastUsed: vi.fn(),
 }));
 
 vi.mock("@/lib/api/compose", () => ({
@@ -260,6 +263,10 @@ function serviceStubs() {
     webhookTest: {
       test: vi.fn(async () => ({})),
     },
+    apiKeyAuth: {
+      getKeyByHash: mocks.getKeyByHash,
+      touchKeyLastUsed: mocks.touchKeyLastUsed,
+    },
   };
 }
 
@@ -360,4 +367,112 @@ describe("management routes are bootstrap-only", () => {
       expect(mocks.composeServices).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("persisted-key authorization (API-5b)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const keyCredential = "waba_dev_0123456789abcdef0123456789abcdef";
+
+  /** A persisted key row shaped for the mocked hash lookup. */
+  function makeKey(overrides: Partial<ApiKey> = {}): ApiKey {
+    return {
+      serial: "key_1",
+      name: "test key",
+      keyPrefix: "waba_dev_",
+      keyHash: "a".repeat(64),
+      scope: "read",
+      status: "active",
+      expiresAt: null,
+      lastUsedAt: null,
+      createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+      deletedAt: null,
+      ...overrides,
+    };
+  }
+
+  const readRoute = routes.find((r) => r.name === "GET /api/v1/sessions")!;
+  const writeRoute = routes.find((r) => r.name === "POST /api/v1/sessions")!;
+
+  function stubPersistedKey(key: ApiKey | null): void {
+    mocks.loadConfig.mockReturnValue({ apiAuthToken: "bootstrap-tok" });
+    mocks.composeServices.mockReturnValue(serviceStubs());
+    mocks.getKeyByHash.mockResolvedValue(key);
+    mocks.touchKeyLastUsed.mockResolvedValue(undefined);
+  }
+
+  it("accepts an active read-scoped key on a read route", async () => {
+    stubPersistedKey(makeKey({ scope: "read" }));
+
+    const res = await invoke(readRoute, keyCredential);
+
+    expect(res.status).toBe(200);
+    expect(mocks.getKeyByHash).toHaveBeenCalledTimes(1);
+    expect(mocks.touchKeyLastUsed).toHaveBeenCalledWith("key_1");
+  });
+
+  it("enforces the scope matrix across read and write routes", async () => {
+    stubPersistedKey(makeKey({ scope: "read" }));
+    expect((await invoke(readRoute, keyCredential)).status).toBe(200);
+    expect((await invoke(writeRoute, keyCredential)).status).toBe(401);
+
+    stubPersistedKey(makeKey({ scope: "write" }));
+    expect((await invoke(readRoute, keyCredential)).status).toBe(401);
+    expect((await invoke(writeRoute, keyCredential)).status).toBe(201);
+
+    stubPersistedKey(makeKey({ scope: "full" }));
+    expect((await invoke(readRoute, keyCredential)).status).toBe(200);
+    expect((await invoke(writeRoute, keyCredential)).status).toBe(201);
+  });
+
+  it("rejects unknown, revoked, and expired keys on public routes", async () => {
+    stubPersistedKey(null);
+    expect((await invoke(readRoute, keyCredential)).status).toBe(401);
+
+    stubPersistedKey(makeKey({ status: "revoked" }));
+    expect((await invoke(readRoute, keyCredential)).status).toBe(401);
+
+    stubPersistedKey(makeKey({ expiresAt: "2000-01-01T00:00:00.000Z" }));
+    expect((await invoke(readRoute, keyCredential)).status).toBe(401);
+    expect(mocks.touchKeyLastUsed).not.toHaveBeenCalled();
+  });
+
+  it("never updates last_used_at when a persisted key fails the scope check", async () => {
+    stubPersistedKey(makeKey({ scope: "read" }));
+
+    const res = await invoke(writeRoute, keyCredential);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual(UNAUTHORIZED);
+    expect(mocks.touchKeyLastUsed).not.toHaveBeenCalled();
+  });
+
+  it("keeps public routes closed when the bootstrap token is empty, even for a valid key", async () => {
+    mocks.loadConfig.mockReturnValue({ apiAuthToken: "" });
+    mocks.composeServices.mockReturnValue(serviceStubs());
+    mocks.getKeyByHash.mockResolvedValue(makeKey({ scope: "full" }));
+
+    const res = await invoke(readRoute, keyCredential);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual(UNAUTHORIZED);
+    expect(mocks.getKeyByHash).not.toHaveBeenCalled();
+    expect(mocks.composeServices).not.toHaveBeenCalled();
+  });
+
+  it("rejects persisted keys on management routes (bootstrap-only, no lookup)", async () => {
+    mocks.loadConfig.mockReturnValue({ apiAuthToken: "bootstrap-tok" });
+    mocks.composeServices.mockReturnValue(serviceStubs());
+    mocks.getKeyByHash.mockResolvedValue(makeKey({ scope: "full" }));
+
+    const res = await invoke(managementRoutes[0], keyCredential);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual(UNAUTHORIZED);
+    expect(mocks.getKeyByHash).not.toHaveBeenCalled();
+    expect(mocks.composeServices).not.toHaveBeenCalled();
+  });
 });

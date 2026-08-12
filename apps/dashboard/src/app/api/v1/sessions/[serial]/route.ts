@@ -31,7 +31,10 @@ export async function GET(
   { params }: { params: Promise<{ serial: string }> }
 ) {
   const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken))) {
+  if (!(await authorizeApi(req, config.apiAuthToken, {
+    requiredScope: "read",
+    getPersistedKeys: () => composeServices(config).apiKeyAuth,
+  }))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 
@@ -51,7 +54,10 @@ export async function DELETE(
   { params }: { params: Promise<{ serial: string }> },
 ) {
   const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken))) {
+  if (!(await authorizeApi(req, config.apiAuthToken, {
+    requiredScope: "write",
+    getPersistedKeys: () => composeServices(config).apiKeyAuth,
+  }))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 

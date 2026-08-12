@@ -53,4 +53,13 @@ export interface ApiKeyTransport {
   updateKey(serial: string, input: UpdateApiKeyInput): Promise<ApiKey | null>;
   /** Set a non-deleted key's status to `revoked`; null when absent/soft-deleted. Idempotent. */
   revokeKey(serial: string): Promise<ApiKey | null>;
+  /**
+   * Best-effort, throttled `last_used_at` update after a successful
+   * persisted-key authentication (API-5b): writes at most once per key per
+   * five minutes and never for revoked, expired, or soft-deleted keys.
+   * Resolves without effect when the throttle or lifecycle conditions are not
+   * met. Callers treat this as non-blocking and must ensure rejections never
+   * escape.
+   */
+  touchKeyLastUsed(serial: string): Promise<void>;
 }

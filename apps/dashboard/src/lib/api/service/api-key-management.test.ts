@@ -124,6 +124,17 @@ class FakeTransport implements ApiKeyTransport {
     this.keys.set(serial, updated);
     return updated;
   }
+
+  async touchKeyLastUsed(serial: string): Promise<void> {
+    const key = this.keys.get(serial);
+    if (key === undefined || key.deletedAt !== null || key.status !== "active") {
+      return;
+    }
+    this.keys.set(serial, {
+      ...key,
+      lastUsedAt: "2026-08-12T00:00:00.000Z",
+    });
+  }
 }
 
 const FUTURE = "2099-12-31T00:00:00.000Z";

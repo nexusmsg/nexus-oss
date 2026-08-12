@@ -11,8 +11,9 @@
  * that services/api used via PostgREST.
  */
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "./client";
+import { LAST_USED_THROTTLE_MS } from "../../domain/api-key";
 import type { ApiKey } from "../../domain/api-key";
 import type { CreateSessionInput, Session, SessionQrCode } from "../../domain/session";
 import type { WebhookConfig, WebhookSubscription } from "../../domain/webhook-config";
@@ -590,6 +591,29 @@ export class DrizzleTransport
       return null;
     }
     return this.mapApiKey(row);
+  }
+
+  async touchKeyLastUsed(serial: string): Promise<void> {
+    const db = getDb();
+    // Throttled: writes only when the last update is older than five minutes
+    // (or never happened), and only for live keys — never revoked, expired, or
+    // soft-deleted rows. Lifecycle conditions double as a race-safety backstop
+    // for the authorizer's best-effort, non-blocking touch.
+    await db
+      .update(apiKeys)
+      .set({ lastUsedAt: new Date() })
+      .where(
+        and(
+          eq(apiKeys.serial, serial),
+          isNull(apiKeys.deletedAt),
+          eq(apiKeys.status, "active"),
+          or(isNull(apiKeys.expiresAt), gt(apiKeys.expiresAt, new Date())),
+          or(
+            isNull(apiKeys.lastUsedAt),
+            lt(apiKeys.lastUsedAt, new Date(Date.now() - LAST_USED_THROTTLE_MS)),
+          ),
+        ),
+      );
   }
 
   private mapApiKey(row: typeof apiKeys.$inferSelect): ApiKey {
