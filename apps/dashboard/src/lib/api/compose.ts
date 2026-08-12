@@ -6,11 +6,14 @@
  */
 
 import { DrizzleTransport } from "./adapters/db/index";
+import { FetchWebhookForwarder } from "./adapters/webhook-forwarder";
 import type { Config } from "./config";
 import { GetWebhookConfigService } from "./service/get-webhook-config";
 import { SendMessageService } from "./service/send-message";
 import { SessionService } from "./service/session";
 import { WebhookConfigManagementService } from "./service/webhook-config-management";
+import type { TestWebhookServicePort } from "./service/webhook-test";
+import { TestWebhookService } from "./service/webhook-test";
 import type { SendMessagePort } from "./ports/send-message";
 import type { SessionServicePort } from "./ports/session-service";
 import type { WebhookConfigProvider } from "./ports/webhook-config-provider";
@@ -21,6 +24,7 @@ export interface WiredServices {
   webhookConfig: WebhookConfigProvider;
   webhookManagement: WebhookConfigManagementServicePort;
   sendMessage: SendMessagePort;
+  webhookTest: TestWebhookServicePort;
   config: Config;
 }
 
@@ -45,11 +49,19 @@ export function composeServices(config: Config): WiredServices {
 
   const webhookManagement = new WebhookConfigManagementService(transport);
 
+  // One-shot webhook test: separate service + fetch forwarder, no persistence.
+  const webhookTest: TestWebhookServicePort = new TestWebhookService({
+    transport,
+    forwarder: new FetchWebhookForwarder(),
+    timeoutMs: config.webhookTestTimeoutMs,
+  });
+
   return {
     sessionService,
     webhookConfig,
     webhookManagement,
     sendMessage,
+    webhookTest,
     config,
   };
 }

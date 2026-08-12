@@ -5,6 +5,8 @@
  * the domain status enums in `services/api/src/domain/session.ts`.
  */
 
+import type { SyntheticWebhookPayload } from "./domain/webhook-test";
+
 export type SessionStatus =
   | "created"
   | "pairing"
@@ -128,6 +130,50 @@ export interface WebhooksListResponse {
 /** `GET /api/v1/webhooks/:serial/subscriptions` response envelope. */
 export interface SubscriptionsListResponse {
   subscriptions: WebhookSubscription[];
+}
+
+/**
+ * Failure codes for `POST /api/v1/webhooks/:serial/test` probes that never
+ * produced an HTTP response (or whose target was rejected up front).
+ */
+export type WebhookTestErrorCode =
+  | "blocked_target" // SSRF guard rejected a private/loopback/link-local/metadata address
+  | "dns_failed" // target hostname did not resolve
+  | "timeout" // endpoint did not respond within the bounded timeout
+  | "network"; // connection / transport error
+
+export interface WebhookTestError {
+  code: WebhookTestErrorCode;
+  message: string;
+}
+
+/**
+ * Result of a single one-shot webhook test (snake_case wire shape from
+ * `POST /api/v1/webhooks/:serial/test`). `outcome` is `"responded"` when the
+ * endpoint returned any HTTP status (including non-2xx); `"failed"` covers
+ * target rejection, DNS failure, timeout, and network errors.
+ */
+export interface WebhookTestResult {
+  outcome: "responded" | "failed";
+  /** `true` when the endpoint returned a 2xx status. */
+  ok: boolean;
+  /** HTTP status; null when the probe failed before/without a response. */
+  status: number | null;
+  status_text: string;
+  headers: Record<string, string>;
+  body: string | null;
+  body_truncated: boolean;
+  duration_ms: number;
+  /** `true` when an X-Hub-Signature-256 header was attached to the request. */
+  signature_sent: boolean;
+  error: WebhookTestError | null;
+  /** Echo of the exact synthetic payload that was sent. */
+  payload: SyntheticWebhookPayload;
+}
+
+/** `POST /api/v1/webhooks/:serial/test` response envelope. */
+export interface WebhookTestResponse {
+  webhook_test: WebhookTestResult;
 }
 
 /** The WABA error envelope body: `{ error: { message, type, code } }`. */

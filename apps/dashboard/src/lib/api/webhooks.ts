@@ -13,6 +13,8 @@ import type {
   UpdateWebhookInput,
   WebhookConfig,
   WebhookSubscription,
+  WebhookTestResponse,
+  WebhookTestResult,
   WebhooksListResponse,
 } from "./types";
 
@@ -61,4 +63,16 @@ export async function removeSubscription(serial: string, eventType: string): Pro
   await apiDelete(
     `/api/v1/webhooks/${encodeURIComponent(serial)}/subscriptions/${encodeURIComponent(eventType)}`,
   );
+}
+
+/**
+ * One-shot webhook test: POSTs a deterministic synthetic inbound WABA
+ * `messages` payload to the config's webhook URL and returns the structured
+ * probe result (endpoint response or transport failure).
+ */
+export async function testWebhook(serial: string): Promise<WebhookTestResult> {
+  const res = await apiPost<WebhookTestResponse>(
+    `/api/v1/webhooks/${encodeURIComponent(serial)}/test`,
+  );
+  return res.webhook_test;
 }

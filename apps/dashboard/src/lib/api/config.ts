@@ -25,6 +25,11 @@ export interface Config {
   resultPollMs: number;
   /** TTL (ms) for heartbeat. Default 30000. */
   heartbeatTtlMs: number;
+  /**
+   * Max wall-clock time (ms) for a one-shot webhook test probe before the
+   * endpoint is reported as timed out. Default 10000.
+   */
+  webhookTestTimeoutMs: number;
 }
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
@@ -40,5 +45,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sendTimeoutMs: readPositiveInt(env.SEND_TIMEOUT_MS, 25000),
     resultPollMs: readPositiveInt(env.RESULT_POLL_MS, 250),
     heartbeatTtlMs: readPositiveInt(env.HEARTBEAT_TTL_MS, 30000),
+    webhookTestTimeoutMs: readPositiveInt(env.WEBHOOK_TEST_TIMEOUT_MS, 10000),
   };
 }
