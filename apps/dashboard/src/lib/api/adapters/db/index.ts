@@ -5,6 +5,7 @@
  * - JobTransport
  * - SessionTransport
  * - WebhookConfigManagementTransport
+ * - ApiKeyTransport
  *
  * Uses the postgres driver directly via Drizzle, talking to the same DB
  * that services/api used via PostgREST.
@@ -12,8 +13,14 @@
 
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { getDb } from "./client";
+import type { ApiKey } from "../../domain/api-key";
 import type { CreateSessionInput, Session, SessionQrCode } from "../../domain/session";
 import type { WebhookConfig, WebhookSubscription } from "../../domain/webhook-config";
+import type {
+  ApiKeyTransport,
+  CreateApiKeyInput,
+  UpdateApiKeyInput,
+} from "../../ports/api-key-transport";
 import type { EnqueueInput, JobTransport, PollResult } from "../../ports/job-transport";
 import type { SessionTransport } from "../../ports/session-transport";
 import type {
@@ -22,6 +29,7 @@ import type {
   WebhookConfigManagementTransport,
 } from "../../ports/webhook-config-management";
 import {
+  apiKeys,
   jobs,
   sessionQrCodes,
   sessions,
@@ -33,7 +41,11 @@ import {
 const UNIQUE_VIOLATION_CODE = "23505";
 
 export class DrizzleTransport
-  implements JobTransport, SessionTransport, WebhookConfigManagementTransport
+  implements
+    JobTransport,
+    SessionTransport,
+    WebhookConfigManagementTransport,
+    ApiKeyTransport
 {
   // ---------------------------------------------------------------------------
   // JobTransport
@@ -482,6 +494,120 @@ export class DrizzleTransport
       );
   }
 
+  // ---------------------------------------------------------------------------
+  // ApiKeyTransport
+  // ---------------------------------------------------------------------------
+
+  async createKey(input: CreateApiKeyInput): Promise<ApiKey> {
+    const db = getDb();
+    const [row] = await db
+      .insert(apiKeys)
+      .values({
+        name: input.name,
+        keyPrefix: input.keyPrefix,
+        keyHash: input.keyHash,
+        scope: input.scope,
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+      })
+      .returning();
+
+    if (!row) {
+      throw new Error("create api key: no row returned");
+    }
+    return this.mapApiKey(row);
+  }
+
+  async listKeys(): Promise<ApiKey[]> {
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(apiKeys)
+      .where(isNull(apiKeys.deletedAt))
+      .orderBy(desc(apiKeys.createdAt));
+
+    return rows.map((row) => this.mapApiKey(row));
+  }
+
+  async getKey(serial: string): Promise<ApiKey | null> {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.serial, serial), isNull(apiKeys.deletedAt)))
+      .limit(1);
+
+    if (!row) {
+      return null;
+    }
+    return this.mapApiKey(row);
+  }
+
+  async getKeyByHash(keyHash: string): Promise<ApiKey | null> {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.deletedAt)))
+      .limit(1);
+
+    if (!row) {
+      return null;
+    }
+    return this.mapApiKey(row);
+  }
+
+  async updateKey(serial: string, input: UpdateApiKeyInput): Promise<ApiKey | null> {
+    const db = getDb();
+    const updates: Record<string, unknown> = {};
+
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.scope !== undefined) updates.scope = input.scope;
+    if (input.expiresAt !== undefined) {
+      updates.expiresAt = input.expiresAt === null ? null : new Date(input.expiresAt);
+    }
+
+    const [row] = await db
+      .update(apiKeys)
+      .set(updates)
+      .where(and(eq(apiKeys.serial, serial), isNull(apiKeys.deletedAt)))
+      .returning();
+
+    if (!row) {
+      return null;
+    }
+    return this.mapApiKey(row);
+  }
+
+  async revokeKey(serial: string): Promise<ApiKey | null> {
+    const db = getDb();
+    const [row] = await db
+      .update(apiKeys)
+      .set({ status: "revoked" })
+      .where(and(eq(apiKeys.serial, serial), isNull(apiKeys.deletedAt)))
+      .returning();
+
+    if (!row) {
+      return null;
+    }
+    return this.mapApiKey(row);
+  }
+
+  private mapApiKey(row: typeof apiKeys.$inferSelect): ApiKey {
+    return {
+      serial: row.serial as unknown as string,
+      name: row.name,
+      keyPrefix: row.keyPrefix,
+      keyHash: row.keyHash,
+      scope: row.scope,
+      status: row.status,
+      expiresAt: row.expiresAt ? String(row.expiresAt) : null,
+      lastUsedAt: row.lastUsedAt ? String(row.lastUsedAt) : null,
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+      deletedAt: row.deletedAt ? String(row.deletedAt) : null,
+    };
+  }
+
   /** Fetch a non-deleted webhook config row by a single column; null when absent. */
   private async fetchConfigBy(
     column: "serial" | "phoneNumberId",
@@ -537,8 +663,9 @@ export class DrizzleTransport
   }
 }
 
-/** Compile-time assertions: DrizzleTransport implements all three ports. */
+/** Compile-time assertions: DrizzleTransport implements all four ports. */
 const _: JobTransport = undefined as unknown as DrizzleTransport;
 const __: SessionTransport = undefined as unknown as DrizzleTransport;
 const ___: WebhookConfigManagementTransport =
   undefined as unknown as DrizzleTransport;
+const ____: ApiKeyTransport = undefined as unknown as DrizzleTransport;
