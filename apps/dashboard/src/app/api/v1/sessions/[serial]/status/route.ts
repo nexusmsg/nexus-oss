@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
-import { authorizeBearer } from "@/lib/api/server-auth";
+import { authorizeApi } from "@/lib/api/server-auth";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,7 @@ export async function GET(
   { params }: { params: Promise<{ serial: string }> }
 ) {
   const config = loadConfig();
-  if (!authorizeBearer(req, config.apiAuthToken)) {
+  if (!(await authorizeApi(req, config.apiAuthToken))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 

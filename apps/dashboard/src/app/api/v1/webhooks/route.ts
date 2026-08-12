@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
-import { authorizeBearer } from "@/lib/api/server-auth";
+import { authorizeApi } from "@/lib/api/server-auth";
 import { ValidationError } from "@/lib/api/domain/errors";
 import type { WebhookConfig } from "@/lib/api/domain/webhook-config";
 
@@ -32,7 +32,7 @@ function toWebhookConfigJson(cfg: WebhookConfig) {
 
 export async function GET(req: NextRequest) {
   const config = loadConfig();
-  if (!authorizeBearer(req, config.apiAuthToken)) {
+  if (!(await authorizeApi(req, config.apiAuthToken))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const config = loadConfig();
-  if (!authorizeBearer(req, config.apiAuthToken)) {
+  if (!(await authorizeApi(req, config.apiAuthToken))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 

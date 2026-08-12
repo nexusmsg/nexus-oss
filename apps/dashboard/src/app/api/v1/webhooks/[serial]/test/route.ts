@@ -12,7 +12,7 @@ import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
 import { RequestAbortedError, ValidationError } from "@/lib/api/domain/errors";
 import type { WebhookProbeResult } from "@/lib/api/domain/webhook-test";
-import { authorizeBearer } from "@/lib/api/server-auth";
+import { authorizeApi } from "@/lib/api/server-auth";
 
 export const runtime = "nodejs";
 
@@ -37,7 +37,7 @@ export async function POST(
   { params }: { params: Promise<{ serial: string }> }
 ) {
   const config = loadConfig();
-  if (!authorizeBearer(req, config.apiAuthToken)) {
+  if (!(await authorizeApi(req, config.apiAuthToken))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 

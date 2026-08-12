@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
 import { ValidationError } from "@/lib/api/domain/errors";
-import { authorizeBearer } from "@/lib/api/server-auth";
+import { authorizeApi } from "@/lib/api/server-auth";
 import type { ApiKeyScope } from "@/lib/api/domain/api-key";
 import type { RedactedApiKey } from "@/lib/api/service/api-key-management";
 
@@ -44,7 +44,7 @@ function toApiKeyJson(key: RedactedApiKey) {
 
 export async function GET(req: NextRequest) {
   const config = loadConfig();
-  if (!authorizeBearer(req, config.apiAuthToken)) {
+  if (!(await authorizeApi(req, config.apiAuthToken))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const config = loadConfig();
-  if (!authorizeBearer(req, config.apiAuthToken)) {
+  if (!(await authorizeApi(req, config.apiAuthToken))) {
     return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
   }
 
