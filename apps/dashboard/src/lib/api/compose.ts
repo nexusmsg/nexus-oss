@@ -8,6 +8,8 @@
 import { DrizzleTransport } from "./adapters/db/index";
 import { FetchWebhookForwarder } from "./adapters/webhook-forwarder";
 import type { Config } from "./config";
+import { ApiKeyManagementService } from "./service/api-key-management";
+import type { ApiKeyManagementServicePort } from "./service/api-key-management";
 import { GetWebhookConfigService } from "./service/get-webhook-config";
 import { SendMessageService } from "./service/send-message";
 import { SessionService } from "./service/session";
@@ -25,6 +27,7 @@ export interface WiredServices {
   webhookManagement: WebhookConfigManagementServicePort;
   sendMessage: SendMessagePort;
   webhookTest: TestWebhookServicePort;
+  apiKeys: ApiKeyManagementServicePort;
   config: Config;
 }
 
@@ -33,8 +36,8 @@ export function composeServices(config: Config): WiredServices {
     throw new Error("DATABASE_URL must be set to serve the API");
   }
 
-  // DrizzleTransport implements JobTransport, SessionTransport, and
-  // WebhookConfigManagementTransport.
+  // DrizzleTransport implements JobTransport, SessionTransport,
+  // WebhookConfigManagementTransport, and ApiKeyTransport.
   const transport = new DrizzleTransport();
 
   const sendMessage: SendMessagePort = new SendMessageService({
@@ -56,12 +59,15 @@ export function composeServices(config: Config): WiredServices {
     timeoutMs: config.webhookTestTimeoutMs,
   });
 
+  const apiKeys: ApiKeyManagementServicePort = new ApiKeyManagementService(transport);
+
   return {
     sessionService,
     webhookConfig,
     webhookManagement,
     sendMessage,
     webhookTest,
+    apiKeys,
     config,
   };
 }

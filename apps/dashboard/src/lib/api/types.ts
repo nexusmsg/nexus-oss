@@ -176,6 +176,69 @@ export interface WebhookTestResponse {
   webhook_test: WebhookTestResult;
 }
 
+/**
+ * API-key management types. Wire shapes mirror the route handlers in
+ * `src/app/api/v1/api-keys/*` and the redacted management view
+ * (`RedactedApiKey` in `src/lib/api/service/api-key-management.ts`).
+ *
+ * The plaintext key secret exists only in `CreateApiKeyResult`; list/get/
+ * update/revoke responses are redacted and never include the secret (or its
+ * SHA-256 hash).
+ */
+
+/** API-key scope: `read` covers GET API routes, `write` covers mutating routes, `full` grants both. */
+export type ApiKeyScope = "read" | "write" | "full";
+
+/** API-key lifecycle status as exposed by the management API. */
+export type ApiKeyStatus = "active" | "revoked";
+
+/** `POST /api/v1/api-keys` request payload. */
+export interface CreateApiKeyInput {
+  name: string;
+  scope: ApiKeyScope;
+  /** Null = key never expires. ISO timestamp when set. */
+  expires_at?: string | null;
+}
+
+/** `PATCH /api/v1/api-keys/:serial` request payload (all fields optional). */
+export interface UpdateApiKeyInput {
+  name?: string;
+  scope?: ApiKeyScope;
+  /** Null clears the expiry. */
+  expires_at?: string | null;
+}
+
+/**
+ * A redacted API key as returned by the API (snake_case, `serial` = id). The
+ * plaintext secret is never present; only the non-secret display `key_prefix`
+ * (e.g. `waba_prod_…`) is exposed.
+ */
+export interface ApiKey {
+  serial: string;
+  name: string;
+  key_prefix: string;
+  scope: ApiKeyScope;
+  status: ApiKeyStatus;
+  expires_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * `POST /api/v1/api-keys` response. The plaintext `secret` is returned exactly
+ * once, only here, and can never be recovered afterwards.
+ */
+export interface CreateApiKeyResult {
+  key: ApiKey;
+  secret: string;
+}
+
+/** `GET /api/v1/api-keys` response envelope. */
+export interface ApiKeysListResponse {
+  api_keys: ApiKey[];
+}
+
 /** The WABA error envelope body: `{ error: { message, type, code } }`. */
 export interface ApiErrorShape {
   error?: {
