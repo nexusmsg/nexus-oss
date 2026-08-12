@@ -8,8 +8,12 @@
  * - 000003_create_sessions + session_qr_codes
  * - 000004_webhook_management (webhook_subscriptions + extensions to webhook_configs)
  * - 000005_add_business_account_id_to_sessions
+ * - 000006 (intentional gap in the migration sequence)
  * - 000007_create_whatsmeow_jobs
  * - 000008_add_qr_job_serial
+ * - 000009_allow_reuse_deleted_session_phone_number
+ * - 000010_allow_reuse_deleted_webhook_config_phone_number
+ * - 000011_create_api_keys
  */
 
 import {
@@ -255,6 +259,45 @@ export const whatsmeowJobs = pgTable(
   }),
 );
 
+// ============================================================================
+// API Keys (000011)
+// ============================================================================
+
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    // serial doubles as the primary key: api_keys rows are global (no tenant
+    // identity) and referenced only by serial or hash, never by a numeric FK.
+    serial: uuid("serial").notNull().defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    keyPrefix: text("key_prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    scope: text("scope")
+      .notNull()
+      .default("read")
+      .$type<"read" | "write" | "full">(),
+    status: text("status")
+      .notNull()
+      .default("active")
+      .$type<"active" | "revoked">(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => ({
+    keyHashIdx: uniqueIndex("api_keys_key_hash_idx").on(table.keyHash),
+    statusIdx: index("api_keys_status_idx")
+      .on(table.status)
+      .where(sql`deleted_at IS NULL`),
+  }),
+);
+
 // Type exports for domain use
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
@@ -268,3 +311,5 @@ export type WebhookSubscription = typeof webhookSubscriptions.$inferSelect;
 export type NewWebhookSubscription = typeof webhookSubscriptions.$inferInsert;
 export type WhatsmeowJob = typeof whatsmeowJobs.$inferSelect;
 export type NewWhatsmeowJob = typeof whatsmeowJobs.$inferInsert;
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type NewApiKey = typeof apiKeys.$inferInsert;
