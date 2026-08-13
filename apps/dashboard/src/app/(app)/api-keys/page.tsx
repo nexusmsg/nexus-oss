@@ -8,7 +8,11 @@
  * Status, Actions).
  *
  * Scope boundaries:
- * - UI-2: Generate Key and the row action buttons are static placeholders.
+ * - UI-4: both Generate Key CTAs open the generate modal; a successful create
+ *   transitions to the one-time reveal modal, where the plaintext secret is
+ *   held only in transient state and cleared when the reveal modal closes or
+ *   the page unmounts. Creation goes through `useApiKeys().create`, which
+ *   refreshes the list afterwards. Rename/Revoke remain placeholders until UI-5.
  * - UI-3: Reveal/Copy are permanently unavailable for existing rows — the
  *   plaintext secret is never persisted, so they carry an explanatory disabled
  *   affordance (tooltip/title/aria-disabled) instead of pretending a value
@@ -21,7 +25,7 @@
  * - Loading skeleton, error banner, and empty state are preserved from UI-1.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   Badge,
@@ -51,7 +55,13 @@ import {
   IconWarning,
 } from "@/components/icons";
 import { useApiKeys } from "@/lib/hooks/useApiKeys";
-import type { ApiKey, ApiKeyScope } from "@/lib/api/types";
+import type {
+  ApiKey,
+  ApiKeyScope,
+  CreateApiKeyResult,
+} from "@/lib/api/types";
+import { GenerateKeyModal } from "./components/GenerateKeyModal";
+import { RevealKeyModal } from "./components/RevealKeyModal";
 
 const COLUMNS = [
   "Name",
@@ -212,10 +222,24 @@ function KeyActions({ name }: { name: string }) {
 /* ── Page ── */
 
 export default function ApiKeysPage() {
-  const { keys, loading, error, refresh } = useApiKeys();
+  const { keys, loading, error, refresh, create } = useApiKeys();
   const [filter, setFilter] = useState<StatusFilter>("all");
   // Snapshot "now" once at mount so derived labels are pure functions of state.
   const [now] = useState(() => Date.now());
+
+  // UI-4 generate flow: the form modal and the one-time reveal result.
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [revealed, setRevealed] = useState<CreateApiKeyResult | null>(null);
+
+  /** A key was created: drop the form and hold the one-time result for reveal. */
+  const handleCreated = useCallback((result: CreateApiKeyResult) => {
+    setRevealed(result);
+  }, []);
+
+  /** Closing the reveal modal drops the only copy of the plaintext secret. */
+  const handleRevealClose = useCallback(() => {
+    setRevealed(null);
+  }, []);
 
   const expiringSummary = useMemo(() => {
     const expiring = keys.filter(
@@ -253,8 +277,8 @@ export default function ApiKeysPage() {
             Manage authentication keys for your integrations
           </p>
         </div>
-        {/* UI-4 wires this CTA to the generate flow; placeholder for UI-2. */}
-        <Button type="button">
+        {/* UI-4: opens the generate modal. */}
+        <Button type="button" onClick={() => setGenerateOpen(true)}>
           <IconPlus size={14} /> Generate Key
         </Button>
       </div>
@@ -350,7 +374,7 @@ export default function ApiKeysPage() {
           title="No API keys yet"
           description="Create an API key to authenticate programmatic access to your integration."
           action={
-            <Button type="button">
+            <Button type="button" onClick={() => setGenerateOpen(true)}>
               <IconPlus size={14} /> Generate Key
             </Button>
           }
@@ -418,6 +442,19 @@ export default function ApiKeysPage() {
           </TableWrap>
         </Card>
       )}
+
+      {/* UI-4 generate flow: form modal → one-time reveal modal. */}
+      <GenerateKeyModal
+        open={generateOpen}
+        onClose={() => setGenerateOpen(false)}
+        onCreate={create}
+        onCreated={handleCreated}
+      />
+      <RevealKeyModal
+        open={revealed !== null}
+        secret={revealed?.secret ?? null}
+        onClose={handleRevealClose}
+      />
     </>
   );
 }
