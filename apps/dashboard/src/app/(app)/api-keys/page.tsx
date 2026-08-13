@@ -12,11 +12,15 @@
  *   transitions to the one-time reveal modal, where the plaintext secret is
  *   held only in transient state and cleared when the reveal modal closes or
  *   the page unmounts. Creation goes through `useApiKeys().create`, which
- *   refreshes the list afterwards. Rename/Revoke remain placeholders until UI-5.
+ *   refreshes the list afterwards.
+ * - UI-5: Rename/Revoke are wired to confirm modals that go through
+ *   `useApiKeys().update` / `useApiKeys().revoke` respectively; each refreshes
+ *   the list afterwards. The row is identified by serial, so the list stays
+ *   correct even if a name changes or a key is revoked.
  * - UI-3: Reveal/Copy are permanently unavailable for existing rows — the
  *   plaintext secret is never persisted, so they carry an explanatory disabled
  *   affordance (tooltip/title/aria-disabled) instead of pretending a value
- *   exists. Rename/Revoke remain placeholders until UI-5.
+ *   exists.
  * - The Key cell shows the redacted prefix with a decorative mask; the
  *   plaintext secret never reaches the client (the management API returns
  *   only `key_prefix`).
@@ -59,9 +63,12 @@ import type {
   ApiKey,
   ApiKeyScope,
   CreateApiKeyResult,
+  UpdateApiKeyInput,
 } from "@/lib/api/types";
 import { GenerateKeyModal } from "./components/GenerateKeyModal";
 import { RevealKeyModal } from "./components/RevealKeyModal";
+import { RenameKeyModal } from "./components/RenameKeyModal";
+import { RevokeKeyModal } from "./components/RevokeKeyModal";
 
 const COLUMNS = [
   "Name",
@@ -156,9 +163,11 @@ function ScopeBadge({ scope }: { scope: ApiKeyScope }) {
  *
  * Security invariant: existing keys are unrecoverable. The management API
  * persists only a SHA-256 hash plus a display prefix, so Reveal/Copy can never
- * act on a real plaintext value. The buttons stay visible for layout parity but
- * render as disabled affordances whose tooltip/title explain why. Rename/Revoke
- * remain placeholders until UI-5 wires up the modal flows.
+ * act on a real plaintext value. They stay visible for layout parity but render
+ * as disabled affordances whose tooltip/title explain why (UI-3).
+ *
+ * Rename/Revoke (UI-5) are functional: they surface a confirm modal that calls
+ * `useApiKeys().update` / `useApiKeys().revoke`, which refresh the list.
  */
 
 /** Shared reason used by the Reveal/Copy explanatory affordances. */
@@ -171,10 +180,13 @@ interface KeyAction {
   danger?: boolean;
   /** Tooltip/title text; when set, replaces the plain action label. */
   explanation?: string;
+  /** When set, the action is enabled and invokes this handler (UI-5). */
+  onClick?: () => void;
 }
 
 function RowAction({ name, action }: { name: string; action: KeyAction }) {
   const hint = action.explanation ?? action.label;
+  const disabled = action.onClick === undefined;
   return (
     <Tooltip content={hint}>
       <Button
@@ -183,7 +195,9 @@ function RowAction({ name, action }: { name: string; action: KeyAction }) {
         size="sm"
         title={hint}
         aria-label={`${action.label} ${name}`}
-        aria-disabled="true"
+        aria-disabled={disabled ? "true" : undefined}
+        disabled={disabled}
+        onClick={action.onClick}
         className={cx(
           action.danger &&
             "border-danger/60 text-danger hover:border-danger hover:text-danger hover:bg-danger/10",
@@ -195,7 +209,15 @@ function RowAction({ name, action }: { name: string; action: KeyAction }) {
   );
 }
 
-function KeyActions({ name }: { name: string }) {
+function KeyActions({
+  name,
+  onRename,
+  onRevoke,
+}: {
+  name: string;
+  onRename?: () => void;
+  onRevoke?: () => void;
+}) {
   const actions: KeyAction[] = [
     {
       label: "Reveal",
@@ -207,8 +229,8 @@ function KeyActions({ name }: { name: string }) {
       icon: <IconCopy size={13} />,
       explanation: `Nothing to copy — ${SECRET_NOT_RECOVERABLE}.`,
     },
-    { label: "Rename", icon: <IconEdit size={13} /> },
-    { label: "Revoke", icon: <IconTrash size={13} />, danger: true },
+    { label: "Rename", icon: <IconEdit size={13} />, onClick: onRename },
+    { label: "Revoke", icon: <IconTrash size={13} />, danger: true, onClick: onRevoke },
   ];
   return (
     <div className="flex items-center gap-1">
@@ -222,7 +244,7 @@ function KeyActions({ name }: { name: string }) {
 /* ── Page ── */
 
 export default function ApiKeysPage() {
-  const { keys, loading, error, refresh, create } = useApiKeys();
+  const { keys, loading, error, refresh, create, update, revoke } = useApiKeys();
   const [filter, setFilter] = useState<StatusFilter>("all");
   // Snapshot "now" once at mount so derived labels are pure functions of state.
   const [now] = useState(() => Date.now());
@@ -230,6 +252,10 @@ export default function ApiKeysPage() {
   // UI-4 generate flow: the form modal and the one-time reveal result.
   const [generateOpen, setGenerateOpen] = useState(false);
   const [revealed, setRevealed] = useState<CreateApiKeyResult | null>(null);
+
+  // UI-5 mutations: the key being renamed/revoked (identified by serial).
+  const [renameTarget, setRenameTarget] = useState<ApiKey | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
 
   /** A key was created: drop the form and hold the one-time result for reveal. */
   const handleCreated = useCallback((result: CreateApiKeyResult) => {
@@ -423,7 +449,11 @@ export default function ApiKeysPage() {
                       <StatusBadge apiKey={key} now={now} />
                     </TableCell>
                     <TableCell>
-                      <KeyActions name={key.name} />
+                      <KeyActions
+                        name={key.name}
+                        onRename={() => setRenameTarget(key)}
+                        onRevoke={() => setRevokeTarget(key)}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -454,6 +484,20 @@ export default function ApiKeysPage() {
         open={revealed !== null}
         secret={revealed?.secret ?? null}
         onClose={handleRevealClose}
+      />
+
+      {/* UI-5 rename/revoke flows: confirm modals → list refresh. */}
+      <RenameKeyModal
+        open={renameTarget !== null}
+        apiKey={renameTarget}
+        onRename={update as (serial: string, input: UpdateApiKeyInput) => Promise<unknown>}
+        onClose={() => setRenameTarget(null)}
+      />
+      <RevokeKeyModal
+        open={revokeTarget !== null}
+        apiKey={revokeTarget}
+        onRevoke={revoke as (serial: string) => Promise<unknown>}
+        onClose={() => setRevokeTarget(null)}
       />
     </>
   );
