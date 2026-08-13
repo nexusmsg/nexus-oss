@@ -409,7 +409,7 @@ export default function ApiKeysPage() {
 
       {/* Keys table */}
       {keys.length > 0 && (
-        <Card>
+        <Card className="max-w-full">
           <CardHeader>
             <CardTitle>{countLabel}</CardTitle>
             <FormSelect

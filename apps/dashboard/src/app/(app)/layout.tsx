@@ -59,7 +59,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="flex flex-1 flex-col md:ml-[var(--sidebar-w)]">
+      <div className="flex flex-1 flex-col min-w-0 md:ml-[var(--sidebar-w)]">
         <Topbar onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
 
         <main className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
