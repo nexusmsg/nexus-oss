@@ -244,6 +244,61 @@ export interface ApiKeySecretResponse {
   secret: string;
 }
 
+/**
+ * Observability activity-log API types (T6). Wire shapes mirror the route
+ * handlers in `src/app/api/v1/observability/*` and the view-models in
+ * `src/lib/api/domain/observability.ts`.
+ */
+
+/** Type discriminator, matches the `activity_events.type` CHECK. */
+export type ActivityType = "api_request" | "whatsapp_event" | "webhook_delivery";
+
+/** Status value, matches the `activity_events.status` CHECK. */
+export type ActivityStatus = "ok" | "error" | "attempted";
+
+/** Resource kind for `resource_type` (sessions/webhook_configs/api_keys/jobs). */
+export type ActivityResourceType = "session" | "webhook_config" | "api_key" | "job";
+
+/** A single activity row as returned by the API (snake-agnostic camelCase view). */
+export interface ActivityEvent {
+  serial: string;
+  type: ActivityType;
+  status: ActivityStatus;
+  phoneNumberId: string | null;
+  businessAccountId: string;
+  summary: string;
+  jobSerial: string | null;
+  waMessageId: string | null;
+  sourceActivitySerial: string | null;
+  resourceType: ActivityResourceType | null;
+  resourceSerial: string | null;
+  /** api_key serial, the literal "bootstrap", or null when unauthenticated. */
+  requestSerial: string | null;
+  /** Kind-specific detail (see plan §3). Loosely typed on the wire. */
+  payload: unknown;
+  createdAt: string;
+}
+
+/** `GET /api/v1/observability` query filters. */
+export interface ActivityListFilters {
+  type?: ActivityType;
+  status?: ActivityStatus;
+  phoneNumberId?: string;
+  /** Max rows to return. */
+  limit?: number;
+}
+
+/** `GET /api/v1/observability` response envelope. */
+export interface ActivitiesListResponse {
+  activities: ActivityEvent[];
+}
+
+/** `GET /api/v1/observability/:serial` response envelope. */
+export interface ActivityDetailResponse {
+  activity: ActivityEvent;
+  related: ActivityEvent[];
+}
+
 /** The WABA error envelope body: `{ error: { message, type, code } }`. */
 export interface ApiErrorShape {
   error?: {
