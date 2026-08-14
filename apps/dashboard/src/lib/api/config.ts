@@ -10,7 +10,7 @@ export interface Config {
   /** Postgres connection string. */
   databaseUrl: string;
   /**
-   * Bearer token required on `POST /:phone_number_id/messages`.
+   * Bearer token required on `POST /api/waba/:version/:phone_number_id/messages`.
    * Empty string disables auth on that route.
    */
   apiAuthToken: string;
