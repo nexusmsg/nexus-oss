@@ -28,6 +28,13 @@ The worker area is split into two binaries that communicate only through the
 `whatsmeow_jobs` table. The API is untouched and still polls `jobs` for
 terminal status + `result.wa_message_id`.
 
+**Why two binaries?** The WhatsApp executor must run as a single instance —
+every instance opens live WhatsApp connections to the same accounts, and
+concurrent connections risk an account ban. Splitting the stateless dispatcher
+out lets it scale horizontally (more replicas, no WhatsApp state) while
+`whatsapp_worker` stays pinned to one process. Never run more than one
+`whatsapp_worker` per deployment.
+
 ```text
 API POST /:phone_number_id/messages -> jobs row (pending)
   -> cmd/worker: handlers/channel consumer claims the jobs row

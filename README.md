@@ -51,12 +51,21 @@ shared/
   Inbound events ─► worker ─► webhook payload ─► your webhook URL (retried w/ backoff)
 ```
 
-The worker runs as two binaries that talk through the `whatsmeow_jobs` queue:
+The worker runs as two binaries that talk through the `whatsmeow_jobs` queue.
+Both ship in the **same Docker image** (`services/worker/Dockerfile`); the
+compose services only select a different entrypoint:
 
 - `cmd/worker` — stateless dispatcher: polls `jobs`, forwards to
-  `whatsmeow_jobs`. Horizontally scalable.
+  `whatsmeow_jobs`. No WhatsApp state. **Safe to scale horizontally.**
 - `cmd/whatsapp_worker` — stateful executor: owns WhatsMeow clients, executes
-  sends, writes terminal status back to `jobs`. Single instance.
+  sends, writes terminal status back to `jobs`. **Strictly one instance.**
+
+> **Why only one `whatsapp_worker`?** Every instance opens its own live
+> WhatsApp connections to the same accounts. Running more than one means the
+> same phone number is connected from multiple processes at once, which risks
+> the account being banned by WhatsApp. The split exists precisely so the
+> dispatcher can scale while the WhatsApp-facing executor stays pinned to a
+> single instance — see [Scaling](#scaling).
 
 See `docs/README.md` for the full docs graph.
 
@@ -78,41 +87,46 @@ npm install            # installs all workspace dependencies
 
 ### 2. Configure environment
 
-Copy the example and set the required values:
+**There is one `.env`, at the repo root** — the dashboard, worker, and docker
+compose all read it. Copy the example and set the required values:
 
 ```bash
 cp .env.example .env
-cp apps/dashboard/.env.example apps/dashboard/.env   # if present
 ```
 
+The dashboard loads it through `dotenv -e ../../.env` in its npm scripts
+(`apps/dashboard/package.json`) because Next.js only auto-loads `.env` from
+its own directory; the worker loads it via godotenv from the repo root.
+
 Generate an encryption key for API-key secrets at rest (32 random bytes,
-base64):
+base64) and paste it into `API_KEY_ENCRYPTION_KEY`:
 
 ```bash
 openssl rand -base64 32
 ```
 
-| Variable | Where | Required | Purpose |
-|----------|-------|----------|---------|
-| `POSTGRES_PORT` | root `.env` | — | Host port for Postgres (default `5433`) |
-| `POSTGRES_PASSWORD` | root `.env` | — | Postgres password (dev default `postgres`) |
-| `DATABASE_URL` | both | ✅ | `postgres://postgres:<pw>@localhost:5433/waba` |
-| `API_AUTH_TOKEN` | both | ✅ | Bootstrap Bearer token for `/api/v1/*`. **Management routes are bootstrap-only; persisted keys can never call them.** Empty = all public routes closed |
-| `INTERNAL_TOKEN` | both | ✅ | Bearer token for `/api/internal/*` (worker ↔ API). Empty = internal routes disabled |
-| `API_KEY_ENCRYPTION_KEY` | dashboard `.env` | ✅ | Base64 32-byte AES-256-GCM key. **Without it, key create/reveal fail closed (500s)** |
-| `API_KEY_ENCRYPTION_KEY_PREVIOUS` | dashboard `.env` | rotation only | Previous key during rotation so old ciphertexts still decrypt |
-| `NEXT_PUBLIC_API_TOKEN` | dashboard `.env` | — | When set, the dashboard always sends `Authorization: Bearer <token>`. When blank, it prompts for the token on first 401 |
-| `API_KEY_ENV` | dashboard `.env` | — | Environment label in key prefixes (`waba_<env>_…`); defaults to `NODE_ENV`/`dev` |
-| `SEND_TIMEOUT_MS` | root `.env` | — | Max ms to wait for a send job (default `25000`) |
-| `RESULT_POLL_MS` | root `.env` | — | Job poll interval (default `250`) |
-| `HEARTBEAT_TTL_MS` | root `.env` | — | Worker heartbeat TTL (default `30000`) |
-| `CORS_ORIGINS` | dashboard `.env` | — | Comma-separated allow-list for cross-origin API calls |
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `POSTGRES_PORT` | — | Host port for Postgres (default `5433`) |
+| `POSTGRES_PASSWORD` | — | Postgres password (dev default `postgres`) |
+| `DATABASE_URL` | ✅ | `postgres://postgres:<pw>@localhost:5433/waba` |
+| `API_AUTH_TOKEN` | ✅ | Bootstrap Bearer token for `/api/v1/*`. **Management routes are bootstrap-only; persisted keys can never call them.** Empty = all public routes closed |
+| `INTERNAL_TOKEN` | ✅ | Bearer token for `/api/internal/*` (worker ↔ API). Empty = internal routes disabled |
+| `API_KEY_ENCRYPTION_KEY` | ✅ | Base64 32-byte AES-256-GCM key. **Without it, key create/reveal fail closed (500s)** |
+| `API_KEY_ENCRYPTION_KEY_PREVIOUS` | rotation only | Previous key during rotation so old ciphertexts still decrypt |
+| `NEXT_PUBLIC_API_TOKEN` | — | When set, the dashboard always sends `Authorization: Bearer <token>`. When blank, it prompts for the token on first 401 |
+| `API_KEY_ENV` | — | Environment label in key prefixes (`waba_<env>_…`); defaults to `NODE_ENV`/`dev` |
+| `SEND_TIMEOUT_MS` | — | Max ms to wait for a send job (default `25000`) |
+| `RESULT_POLL_MS` | — | Job poll interval (default `250`) |
+| `HEARTBEAT_TTL_MS` | — | Worker heartbeat TTL (default `30000`) |
+| `CORS_ORIGINS` | — | Comma-separated allow-list for cross-origin API calls |
 | `BUSINESS_ACCOUNT_ID` | root `.env` | — | Business account id (worker) |
 | `WHATSMEOW_STORE_DSN` | root `.env` | — | WhatsMeow session-store DSN |
 | `API_URL` | root `.env` | — | Base URL the worker uses to reach the API (default `http://localhost:3002`) |
 | `WEBHOOK_CONFIG_TTL` | root `.env` | — | Webhook-config cache TTL (default `30s`) |
 | `HEARTBEAT_INTERVAL` | root `.env` | — | Worker heartbeat interval (default `10s`) |
 | `POLL_INTERVAL`, `MAX_ATTEMPTS`, `MIGRATIONS_DIR` | root `.env` | — | Worker queue polling, send attempts, migration path |
+| `WORKER_REPLICAS` | root `.env` | — | Compose replicas for the stateless `worker` dispatcher (default `1`). `whatsapp_worker` is pinned to `1` — do not scale it (account-ban risk) |
 
 ### 3. Start Postgres and apply migrations
 
@@ -142,6 +156,9 @@ npm run build && npm run start
 
 ### 5. Run the worker (Go)
 
+The Docker image (`services/worker/Dockerfile`) ships both binaries; the
+compose services select the entrypoint for you. Running from source:
+
 ```bash
 cd services/worker
 go build ./cmd/worker ./cmd/whatsapp_worker
@@ -149,8 +166,26 @@ go build ./cmd/worker ./cmd/whatsapp_worker
 ./whatsapp_worker   # stateful WhatsMeow executor (single instance)
 ```
 
+Run **exactly one** `whatsapp_worker` per deployment — a second instance opens
+concurrent WhatsApp connections to the same accounts and risks a ban.
+
 The worker reads env from the root `.env` (godotenv). For a first run you only
 need Postgres + the API up; WhatsApp features require pairing a device (below).
+
+#### Scaling
+
+Only the **stateless dispatcher** scales. Scale `worker` freely; keep
+`whatsapp_worker` at **exactly one instance** (it owns the live WhatsApp
+connections — more than one risks an account ban).
+
+```bash
+# Docker Compose: scale the dispatcher, never the WhatsApp executor
+docker compose up -d --scale worker=3 --scale whatsapp_worker=1
+```
+
+`docker-compose.yml` makes this the default: `worker` reads `WORKER_REPLICAS`
+(default `1`), and `whatsapp_worker` is pinned to `deploy.replicas: 1`
+(swarm). Do not raise the latter.
 
 ### 6. Using the API
 

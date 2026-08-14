@@ -8,8 +8,11 @@ WhatsApp message gateway, split into two binaries that communicate through the
   `jobs` row `claimed`. No WhatsMeow state; horizontally scalable.
 - `cmd/whatsapp_worker` — **stateful executor**: owns WhatsMeow clients and the
   `DeviceManager`, polls `whatsmeow_jobs`, executes each job, and writes the
-  terminal status + result back to `jobs` via `source_job_serial`. Single
-  instance.
+  terminal status + result back to `jobs` via `source_job_serial`. **Strictly
+  one instance**: every instance opens live WhatsApp connections to the same
+  accounts, and running more than one risks an account ban. The split exists so
+  `cmd/worker` can scale horizontally without ever duplicating the WhatsApp
+  connections.
 
 Path: `services/worker/`
 
