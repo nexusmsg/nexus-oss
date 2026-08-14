@@ -14,6 +14,8 @@
  * - 000009_allow_reuse_deleted_session_phone_number
  * - 000010_allow_reuse_deleted_webhook_config_phone_number
  * - 000011_create_api_keys
+ * - 000012_add_api_key_ciphertext
+ * - 000013_create_activity_events
  */
 
 import {
@@ -83,7 +85,7 @@ export const webhookConfigs = pgTable(
   {
     id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
     serial: uuid("serial").notNull().defaultRandom(),
-    phoneNumberId: text("phone_number_id").notNull().unique(),
+    phoneNumberId: text("phone_number_id").notNull(),
     webhookUrl: text("webhook_url").notNull(),
     webhookSecret: text("webhook_secret"),
     enabled: boolean("enabled").notNull().default(true),
@@ -100,6 +102,9 @@ export const webhookConfigs = pgTable(
   },
   (table) => ({
     serialIdx: uniqueIndex("webhook_configs_serial_idx").on(table.serial),
+    phoneNumberIdActiveIdx: uniqueIndex("webhook_configs_phone_number_id_active_idx")
+      .on(table.phoneNumberId)
+      .where(sql`deleted_at IS NULL`),
   }),
 );
 
@@ -112,7 +117,7 @@ export const sessions = pgTable(
   {
     id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
     serial: uuid("serial").notNull().defaultRandom(),
-    phoneNumberId: text("phone_number_id").notNull().unique(),
+    phoneNumberId: text("phone_number_id").notNull(),
     number: text("number").notNull(),
     displayPhone: text("display_phone").notNull().default(""),
     status: text("status")
@@ -134,6 +139,9 @@ export const sessions = pgTable(
   },
   (table) => ({
     serialIdx: uniqueIndex("sessions_serial_idx").on(table.serial),
+    phoneNumberIdActiveIdx: uniqueIndex("sessions_phone_number_id_active_idx")
+      .on(table.phoneNumberId)
+      .where(sql`deleted_at IS NULL`),
   }),
 );
 
@@ -172,7 +180,7 @@ export const sessionQrCodes = pgTable(
     serialIdx: uniqueIndex("session_qr_codes_serial_idx").on(table.serial),
     sessionIdx: index("session_qr_codes_session_idx").on(
       table.sessionId,
-      table.createdAt,
+      table.createdAt.desc(),
     ),
     jobSerialIdx: index("session_qr_codes_job_serial_idx")
       .on(table.jobSerial)
@@ -302,6 +310,66 @@ export const apiKeys = pgTable(
   }),
 );
 
+// ============================================================================
+// Activity Events (000013)
+// ============================================================================
+
+export const activityEvents = pgTable(
+  "activity_events",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    serial: uuid("serial").notNull().defaultRandom(),
+    type: text("type")
+      .notNull()
+      .$type<"api_request" | "whatsapp_event" | "webhook_delivery">(),
+    status: text("status")
+      .notNull()
+      .$type<"ok" | "error" | "attempted">(),
+    // Tenant/device key (existing convention, no FK)
+    phoneNumberId: text("phone_number_id"),
+    // Parity with sessions: never null once written, defaults to empty string
+    businessAccountId: text("business_account_id").notNull().default(""),
+    // Short human line for list rows
+    summary: text("summary").notNull().default(""),
+    // Correlation columns (all nullable; uuid links follow the no-FK
+    // source_job_serial pattern). `request_serial` is text (not uuid): it
+    // stores an api_key serial OR the literal 'bootstrap'.
+    jobSerial: uuid("job_serial"),
+    waMessageId: text("wa_message_id"),
+    sourceActivitySerial: uuid("source_activity_serial"),
+    resourceType: text("resource_type"),
+    resourceSerial: uuid("resource_serial"),
+    requestSerial: text("request_serial"),
+    // Kind-specific detail (see plan §3 for per-type shapes)
+    payload: jsonb("payload"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    listIdx: index("activity_events_list_idx").on(
+      table.createdAt.desc(),
+      table.type,
+    ),
+    phoneIdx: index("activity_events_phone_idx").on(table.phoneNumberId),
+    jobSerialIdx: index("activity_events_job_serial_idx")
+      .on(table.jobSerial)
+      .where(sql`job_serial IS NOT NULL`),
+    waMessageIdIdx: index("activity_events_wamid_idx")
+      .on(table.waMessageId)
+      .where(sql`wa_message_id IS NOT NULL`),
+    sourceIdx: index("activity_events_source_idx")
+      .on(table.sourceActivitySerial)
+      .where(sql`source_activity_serial IS NOT NULL`),
+    resourceIdx: index("activity_events_resource_idx")
+      .on(table.resourceSerial)
+      .where(sql`resource_serial IS NOT NULL`),
+  }),
+);
+
 // Type exports for domain use
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
@@ -317,3 +385,5 @@ export type WhatsmeowJob = typeof whatsmeowJobs.$inferSelect;
 export type NewWhatsmeowJob = typeof whatsmeowJobs.$inferInsert;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
+export type ActivityEvent = typeof activityEvents.$inferSelect;
+export type NewActivityEvent = typeof activityEvents.$inferInsert;

@@ -145,6 +145,65 @@ function touchLastUsedBestEffort(persistedKeys: ApiKeyAuthPort, key: ApiKey): vo
   }
 }
 
+/**
+ * Identity result returned by `authorizeApiWithIdentity`. `authorized` mirrors
+ * `authorizeApi`; `identity` is the resolved principal — the api key `serial`
+ * for a persisted-key authorization, the literal `"bootstrap"` when the
+ * bootstrap token matched, or `null` when unauthorized.
+ */
+export interface AuthorizeApiIdentity {
+  authorized: boolean;
+  identity: string | null;
+}
+
+/**
+ * Sibling of `authorizeApi` (plan §10 R1) that additionally resolves the
+ * authenticated identity. Added — not a change to `authorizeApi`'s ~57 call
+ * sites — for the future capture wrapper (T7), which needs the principal to
+ * populate `request_serial`. Reuses the exact bootstrap / persisted-key logic
+ * from `authorizeApi`; `identity` is `null` unless `authorized` is true.
+ */
+export async function authorizeApiWithIdentity(
+  req: NextRequest,
+  token: string,
+  options: AuthorizeApiOptions,
+): Promise<AuthorizeApiIdentity> {
+  if (token === "") return { authorized: false, identity: null };
+  const candidate = bearerToken(req);
+  if (candidate === null) return { authorized: false, identity: null };
+  if (safeEqual(candidate, token)) return { authorized: true, identity: "bootstrap" };
+
+  const getPersistedKeys = options.getPersistedKeys;
+  if (getPersistedKeys === undefined) return { authorized: false, identity: null };
+  if (!candidate.startsWith(PERSISTED_KEY_PREFIX)) return { authorized: false, identity: null };
+
+  let persistedKeys: ApiKeyAuthPort;
+  try {
+    persistedKeys = getPersistedKeys();
+  } catch {
+    return { authorized: false, identity: null };
+  }
+
+  let key: ApiKey | null;
+  try {
+    key = await persistedKeys.getKeyByHash(hashApiKeySecret(candidate));
+  } catch {
+    return { authorized: false, identity: null };
+  }
+  // null = unknown or soft-deleted (the adapter excludes soft-deleted rows).
+  if (key === null) return { authorized: false, identity: null };
+  // Only `active` keys authenticate; `revoked` keys are rejected.
+  if (key.status !== "active") return { authorized: false, identity: null };
+  // Expired keys are rejected; `null` = never expires.
+  if (key.expiresAt !== null && Date.parse(key.expiresAt) <= Date.now()) {
+    return { authorized: false, identity: null };
+  }
+  if (!scopeAllows(key.scope, options.requiredScope)) return { authorized: false, identity: null };
+
+  touchLastUsedBestEffort(persistedKeys, key);
+  return { authorized: true, identity: key.serial };
+}
+
 /** `full` grants both scopes; otherwise the key's scope must equal the requirement. */
 function scopeAllows(scope: ApiKeyScope, required: RequiredApiKeyScope): boolean {
   if (scope === "full") return true;

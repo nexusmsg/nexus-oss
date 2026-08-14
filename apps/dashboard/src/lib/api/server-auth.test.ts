@@ -19,6 +19,7 @@ import type { ApiKey } from "./domain/api-key";
 import { hashApiKeySecret } from "./service/api-key-management";
 import {
   authorizeApi,
+  authorizeApiWithIdentity,
   authorizeInternal,
   bearerToken,
   safeEqual,
@@ -451,5 +452,91 @@ describe("authorizeInternal (strict INTERNAL_TOKEN isolation)", () => {
   it("does not fall back to API_AUTH_TOKEN when INTERNAL_TOKEN is unset", () => {
     vi.stubEnv("INTERNAL_TOKEN", undefined);
     expect(authorizeInternal(bearerReq("bootstrap-tok"))).toBe(false);
+  });
+});
+
+describe("authorizeApiWithIdentity (R1 sibling)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resolves 'bootstrap' when the bootstrap token matches", async () => {
+    await expect(
+      authorizeApiWithIdentity(bearerReq("tok"), "tok", { requiredScope: "read" }),
+    ).resolves.toEqual({ authorized: true, identity: "bootstrap" });
+  });
+
+  it("resolves the api key serial for an authorized persisted key", async () => {
+    const port = authPort(makeKey({ serial: "key_42", scope: "read" }));
+    await expect(
+      authorizeApiWithIdentity(bearerReq(KEY_CREDENTIAL), "bootstrap-tok", {
+        requiredScope: "read",
+        getPersistedKeys: () => port,
+      }),
+    ).resolves.toEqual({ authorized: true, identity: "key_42" });
+    expect(port.touchKeyLastUsed).toHaveBeenCalledWith("key_42");
+  });
+
+  it("resolves identity null and authorized false when unauthorized", async () => {
+    const port = authPort(null);
+    await expect(
+      authorizeApiWithIdentity(bearerReq(KEY_CREDENTIAL), "bootstrap-tok", {
+        requiredScope: "read",
+        getPersistedKeys: () => port,
+      }),
+    ).resolves.toEqual({ authorized: false, identity: null });
+  });
+
+  it("returns identity null (not bootstrap) for a non-bearer or missing credential", async () => {
+    await expect(
+      authorizeApiWithIdentity(bearerReq(null), "tok", { requiredScope: "read" }),
+    ).resolves.toEqual({ authorized: false, identity: null });
+    await expect(
+      authorizeApiWithIdentity(basicReq(), "tok", { requiredScope: "read" }),
+    ).resolves.toEqual({ authorized: false, identity: null });
+  });
+
+  it("closes when the configured token is empty, with null identity", async () => {
+    const port = authPort(makeKey());
+    await expect(
+      authorizeApiWithIdentity(bearerReq(KEY_CREDENTIAL), "", {
+        requiredScope: "read",
+        getPersistedKeys: () => port,
+      }),
+    ).resolves.toEqual({ authorized: false, identity: null });
+  });
+
+  it("rejects a wrong scope and never resolves the serial", async () => {
+    const port = authPort(makeKey({ scope: "read" }));
+    await expect(
+      authorizeApiWithIdentity(bearerReq(KEY_CREDENTIAL), "bootstrap-tok", {
+        requiredScope: "write",
+        getPersistedKeys: () => port,
+      }),
+    ).resolves.toEqual({ authorized: false, identity: null });
+    expect(port.touchKeyLastUsed).not.toHaveBeenCalled();
+  });
+
+  it("fails closed (null identity) when the persisted-key lookup rejects", async () => {
+    const port = {
+      getKeyByHash: vi.fn(async () => {
+        throw new Error("db down");
+      }),
+      touchKeyLastUsed: vi.fn(async () => undefined),
+    };
+    await expect(
+      authorizeApiWithIdentity(bearerReq(KEY_CREDENTIAL), "bootstrap-tok", {
+        requiredScope: "read",
+        getPersistedKeys: () => port,
+      }),
+    ).resolves.toEqual({ authorized: false, identity: null });
+  });
+
+  it("does not resolve a serial for bootstrap-only management routes", async () => {
+    await expect(
+      authorizeApiWithIdentity(bearerReq(KEY_CREDENTIAL), "bootstrap-tok", {
+        requiredScope: "write",
+      }),
+    ).resolves.toEqual({ authorized: false, identity: null });
   });
 });

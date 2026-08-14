@@ -22,6 +22,11 @@ import type {
   CreateApiKeyInput,
   UpdateApiKeyInput,
 } from "../../ports/api-key-transport";
+import type {
+  ActivityInsertRow,
+  ActivityRow,
+  ActivityTransport,
+} from "../../ports/activity-transport";
 import type { EnqueueInput, JobTransport, PollResult } from "../../ports/job-transport";
 import type { SessionTransport } from "../../ports/session-transport";
 import type {
@@ -30,13 +35,13 @@ import type {
   WebhookConfigManagementTransport,
 } from "../../ports/webhook-config-management";
 import {
+  activityEvents,
   apiKeys,
   jobs,
   sessionQrCodes,
   sessions,
   webhookConfigs,
   webhookSubscriptions,
-  whatsmeowJobs,
 } from "@shared/db/schema";
 
 const UNIQUE_VIOLATION_CODE = "23505";
@@ -46,7 +51,8 @@ export class DrizzleTransport
     JobTransport,
     SessionTransport,
     WebhookConfigManagementTransport,
-    ApiKeyTransport
+    ApiKeyTransport,
+    ActivityTransport
 {
   // ---------------------------------------------------------------------------
   // JobTransport
@@ -639,6 +645,140 @@ export class DrizzleTransport
     return rows.length;
   }
 
+  // ---------------------------------------------------------------------------
+  // ActivityTransport (observability activity log)
+  // ---------------------------------------------------------------------------
+
+  async insert(row: ActivityInsertRow): Promise<string> {
+    const db = getDb();
+    const [inserted] = await db
+      .insert(activityEvents)
+      .values({
+        serial: row.serial ?? undefined,
+        type: row.type,
+        status: row.status,
+        phoneNumberId: row.phoneNumberId ?? null,
+        businessAccountId: row.businessAccountId ?? "",
+        summary: row.summary ?? "",
+        jobSerial: row.jobSerial ?? null,
+        waMessageId: row.waMessageId ?? null,
+        sourceActivitySerial: row.sourceActivitySerial ?? null,
+        resourceType: row.resourceType ?? null,
+        resourceSerial: row.resourceSerial ?? null,
+        requestSerial: row.requestSerial ?? null,
+        payload: row.payload ?? null,
+      })
+      .returning({ serial: activityEvents.serial });
+
+    if (!inserted) {
+      throw new Error("insert activity: no row returned");
+    }
+    return inserted.serial;
+  }
+
+  async list(filters: {
+    type?: ActivityRow["type"];
+    status?: ActivityRow["status"];
+    phoneNumberId?: string;
+    limit?: number;
+  }): Promise<ActivityRow[]> {
+    const db = getDb();
+    const conditions = [];
+    if (filters.type !== undefined) {
+      conditions.push(eq(activityEvents.type, filters.type));
+    }
+    if (filters.status !== undefined) {
+      conditions.push(eq(activityEvents.status, filters.status));
+    }
+    if (filters.phoneNumberId !== undefined && filters.phoneNumberId !== "") {
+      conditions.push(eq(activityEvents.phoneNumberId, filters.phoneNumberId));
+    }
+
+    const rows = await db
+      .select()
+      .from(activityEvents)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(activityEvents.createdAt))
+      .limit(filters.limit ?? 100);
+
+    return rows.map((row) => this.mapActivity(row));
+  }
+
+  async getBySerial(serial: string): Promise<ActivityRow | null> {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(activityEvents)
+      .where(eq(activityEvents.serial, serial))
+      .limit(1);
+
+    if (!row) return null;
+    return this.mapActivity(row);
+  }
+
+  async listRelated(serial: string): Promise<ActivityRow[]> {
+    const db = getDb();
+    const target = await this.getBySerial(serial);
+    if (target === null) return [];
+
+    // Collect non-null correlation values from the target row; any row sharing
+    // one is related. Also include both sides of the source_activity_serial
+    // chain: rows this row points at, and rows pointing at this row.
+    const correlations: ({ col: typeof activityEvents.jobSerial; val: string | null } | { col: typeof activityEvents.waMessageId; val: string | null } | { col: typeof activityEvents.resourceSerial; val: string | null } | { col: typeof activityEvents.sourceActivitySerial; val: string | null })[] = [
+      { col: activityEvents.jobSerial, val: target.jobSerial },
+      { col: activityEvents.waMessageId, val: target.waMessageId },
+      { col: activityEvents.resourceSerial, val: target.resourceSerial },
+      { col: activityEvents.sourceActivitySerial, val: target.sourceActivitySerial },
+    ];
+
+    const matchConditions = correlations
+      .filter((c) => c.val !== null)
+      .map((c) => eq(c.col, c.val as string));
+
+    // Rows pointing at the target via source_activity_serial.
+    matchConditions.push(eq(activityEvents.sourceActivitySerial, target.serial));
+    // The target's own source_activity_serial (a serial that may exist).
+    if (target.sourceActivitySerial !== null) {
+      matchConditions.push(eq(activityEvents.serial, target.sourceActivitySerial));
+    }
+
+    const rows = await db
+      .select()
+      .from(activityEvents)
+      .where(or(...matchConditions))
+      .orderBy(desc(activityEvents.createdAt));
+
+    // Exclude the target row itself and de-duplicate.
+    const seen = new Set<string>();
+    return rows
+      .filter((row) => {
+        if (row.serial === target.serial) return false;
+        if (seen.has(row.serial)) return false;
+        seen.add(row.serial);
+        return true;
+      })
+      .map((row) => this.mapActivity(row));
+  }
+
+  private mapActivity(row: typeof activityEvents.$inferSelect): ActivityRow {
+    return {
+      serial: row.serial as unknown as string,
+      type: row.type,
+      status: row.status,
+      phoneNumberId: row.phoneNumberId,
+      businessAccountId: row.businessAccountId,
+      summary: row.summary,
+      jobSerial: row.jobSerial as string | null,
+      waMessageId: row.waMessageId,
+      sourceActivitySerial: row.sourceActivitySerial as string | null,
+      resourceType: row.resourceType as ActivityRow["resourceType"],
+      resourceSerial: row.resourceSerial as string | null,
+      requestSerial: row.requestSerial,
+      payload: row.payload,
+      createdAt: row.createdAt,
+    };
+  }
+
   private mapApiKey(row: typeof apiKeys.$inferSelect): ApiKey {
     return {
       serial: row.serial as unknown as string,
@@ -711,9 +851,10 @@ export class DrizzleTransport
   }
 }
 
-/** Compile-time assertions: DrizzleTransport implements all four ports. */
+/** Compile-time assertions: DrizzleTransport implements all ports. */
 const _: JobTransport = undefined as unknown as DrizzleTransport;
 const __: SessionTransport = undefined as unknown as DrizzleTransport;
 const ___: WebhookConfigManagementTransport =
   undefined as unknown as DrizzleTransport;
 const ____: ApiKeyTransport = undefined as unknown as DrizzleTransport;
+const _____: ActivityTransport = undefined as unknown as DrizzleTransport;
