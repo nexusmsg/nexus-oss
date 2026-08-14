@@ -13,7 +13,7 @@ export interface SendMessageInput {
 }
 
 export type SendMessageResult =
-  | { status: "succeeded"; wamid: string }
+  | { status: "succeeded"; wamid: string; jobSerial: string }
   | { status: "failed"; reason: string };
 
 export interface SendMessagePort {

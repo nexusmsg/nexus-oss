@@ -291,10 +291,15 @@ function invoke(r: RouteCase, token: string | null, scheme?: "basic"): Promise<R
   return r.call(req);
 }
 
+async function drainCaptureAndClear(): Promise<void> {
+  // Drain fire-and-forget activity capture so a previous success cannot
+  // register a late composeServices call on the next case.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  vi.clearAllMocks();
+}
+
 describe("bootstrap auth parity", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(drainCaptureAndClear);
 
   it.each(routes)("$name accepts the configured bootstrap token", async (r) => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "tok" });
@@ -308,9 +313,7 @@ describe("bootstrap auth parity", () => {
 });
 
 describe("rejects missing/wrong/non-Bearer credentials", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(drainCaptureAndClear);
 
   it.each(routes)("$name returns the WABA 401 envelope when auth is missing", async (r) => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "tok" });
@@ -344,9 +347,7 @@ describe("rejects missing/wrong/non-Bearer credentials", () => {
 });
 
 describe("empty-token closure", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(drainCaptureAndClear);
 
   it.each(routes)("$name returns 401 when API_AUTH_TOKEN is empty", async (r) => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "" });
@@ -360,9 +361,7 @@ describe("empty-token closure", () => {
 });
 
 describe("management routes are bootstrap-only", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(drainCaptureAndClear);
 
   it.each(managementRoutes)(
     "$name rejects a persisted-key-shaped credential",
@@ -379,9 +378,7 @@ describe("management routes are bootstrap-only", () => {
 });
 
 describe("persisted-key authorization (API-5b)", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(drainCaptureAndClear);
 
   const keyCredential = "waba_dev_0123456789abcdef0123456789abcdef";
 

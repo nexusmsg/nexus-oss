@@ -5,9 +5,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
-import { authorizeApi } from "@/lib/api/server-auth";
 import { ValidationError } from "@/lib/api/domain/errors";
 import type { Session } from "@/lib/api/domain/session";
+import { withApiActivity } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -31,49 +31,48 @@ function toSessionJson(session: Session) {
   };
 }
 
-export async function GET(req: NextRequest) {
-  const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken, {
-    requiredScope: "read",
-    getPersistedKeys: () => composeServices(config).apiKeyAuth,
-  }))) {
-    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
-  }
-
-  const { sessionService } = composeServices(config);
-  const sessions = await sessionService.listSessions();
-  return NextResponse.json({ sessions: sessions.map(toSessionJson) });
-}
-
-export async function POST(req: NextRequest) {
-  const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken, {
-    requiredScope: "write",
-    getPersistedKeys: () => composeServices(config).apiKeyAuth,
-  }))) {
-    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
-  }
-
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
-  }
-
-  try {
+export const GET = withApiActivity({
+  requiredScope: "read",
+  handler: async (req) => {
+    const config = loadConfig();
     const { sessionService } = composeServices(config);
-    const session = await sessionService.createSession({
-      phoneNumberId: asString(body.phone_number_id) ?? "",
-      number: asString(body.number) ?? "",
-      displayPhone: asString(body.display_phone) ?? undefined,
-      businessAccountId: asString(body.business_account_id) ?? undefined,
-    });
-    return NextResponse.json(toSessionJson(session), { status: 201 });
-  } catch (err) {
-    if (err instanceof ValidationError) {
-      return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+    const sessions = await sessionService.listSessions();
+    return NextResponse.json({ sessions: sessions.map(toSessionJson) });
+  },
+});
+
+export const POST = withApiActivity({
+  requiredScope: "write",
+  handler: async (req) => {
+    const config = loadConfig();
+    const { sessionService } = composeServices(config);
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
     }
-    throw err;
-  }
-}
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
+    }
+    const record = body as Record<string, unknown>;
+    const phoneNumberId = asString(record.phone_number_id);
+    if (phoneNumberId === null) {
+      return NextResponse.json({ error: { message: "phone_number_id is required", type: "OAuthException", code: 400 } }, { status: 400 });
+    }
+    try {
+      const session = await sessionService.createSession({
+        phoneNumberId,
+        number: asString(record.number) ?? "",
+        displayPhone: asString(record.display_phone) ?? "",
+        businessAccountId: asString(record.business_account_id) ?? "",
+      });
+      return NextResponse.json(toSessionJson(session), { status: 201 });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+      }
+      throw err;
+    }
+  },
+});

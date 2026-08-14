@@ -10,11 +10,19 @@ import { NextRequest } from "next/server";
 import { SendTimeoutError } from "@/lib/api/domain/errors";
 import { POST } from "./route";
 
-const mocks = vi.hoisted(() => ({
-  composeServices: vi.fn(),
-  loadConfig: vi.fn(),
-  send: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const send = vi.fn();
+  const getKeyByHash = vi.fn();
+  const touchKeyLastUsed = vi.fn();
+  return {
+    composeServices: vi.fn(),
+    loadConfig: vi.fn(),
+    send,
+    getKeyByHash,
+    touchKeyLastUsed,
+    record: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock("@/lib/api/compose", () => ({
   composeServices: mocks.composeServices,
@@ -61,11 +69,11 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
     expect(await unauthorized.json()).toEqual({
       error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 },
     });
-    expect(mocks.composeServices).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
 
     const wrongToken = await POST(request("wrong", validBody), context());
     expect(wrongToken.status).toBe(401);
-    expect(mocks.composeServices).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it("returns 400 for an unsupported version", async () => {
@@ -81,7 +89,7 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
         code: 400,
       },
     });
-    expect(mocks.composeServices).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it("returns 400 for a malformed version", async () => {
@@ -90,7 +98,7 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
     const res = await POST(request("tok", validBody, "v26"), context("v26"));
 
     expect(res.status).toBe(400);
-    expect(mocks.composeServices).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it("returns 400 for an unparseable body", async () => {
@@ -111,7 +119,11 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
 
   it("returns 400 with the validator message for an invalid payload", async () => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "tok" });
-    mocks.composeServices.mockReturnValue({ sendMessage: { send: mocks.send } });
+    mocks.composeServices.mockReturnValue({
+      sendMessage: { send: mocks.send },
+      apiKeyAuth: { getKeyByHash: mocks.getKeyByHash, touchKeyLastUsed: mocks.touchKeyLastUsed },
+      observability: { record: mocks.record },
+    });
 
     const res = await POST(
       request("tok", { messaging_product: "telegram", type: "text", to: "1", text: { body: "hi" } }),
@@ -127,9 +139,13 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
 
   it("returns 200 with the official WABA envelope on success", async () => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "tok" });
-    mocks.composeServices.mockReturnValue({ sendMessage: { send: mocks.send } });
+    mocks.composeServices.mockReturnValue({
+      sendMessage: { send: mocks.send },
+      apiKeyAuth: { getKeyByHash: mocks.getKeyByHash, touchKeyLastUsed: mocks.touchKeyLastUsed },
+      observability: { record: mocks.record },
+    });
     const wamid = "wamid.HBgLMTY0NjcwNDM1OTUVAgARGBI1RjQyNUE3NEYxMzAzMzQ5MkEA";
-    mocks.send.mockResolvedValue({ status: "succeeded", wamid });
+    mocks.send.mockResolvedValue({ status: "succeeded", wamid, jobSerial: "job_1" });
 
     const res = await POST(request("tok", validBody), context());
 
@@ -148,7 +164,11 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
 
   it("returns 500 with the worker reason in error_data.details on send failure", async () => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "tok" });
-    mocks.composeServices.mockReturnValue({ sendMessage: { send: mocks.send } });
+    mocks.composeServices.mockReturnValue({
+      sendMessage: { send: mocks.send },
+      apiKeyAuth: { getKeyByHash: mocks.getKeyByHash, touchKeyLastUsed: mocks.touchKeyLastUsed },
+      observability: { record: mocks.record },
+    });
     mocks.send.mockResolvedValue({
       status: "failed",
       reason: 'executor: no sender for phone number id "1001"',
@@ -169,7 +189,11 @@ describe("POST /api/waba/:version/:phone_number_id/messages", () => {
 
   it("returns 504 when the send poll times out", async () => {
     mocks.loadConfig.mockReturnValue({ apiAuthToken: "tok" });
-    mocks.composeServices.mockReturnValue({ sendMessage: { send: mocks.send } });
+    mocks.composeServices.mockReturnValue({
+      sendMessage: { send: mocks.send },
+      apiKeyAuth: { getKeyByHash: mocks.getKeyByHash, touchKeyLastUsed: mocks.touchKeyLastUsed },
+      observability: { record: mocks.record },
+    });
     mocks.send.mockRejectedValue(new SendTimeoutError());
 
     const res = await POST(request("tok", validBody), context());

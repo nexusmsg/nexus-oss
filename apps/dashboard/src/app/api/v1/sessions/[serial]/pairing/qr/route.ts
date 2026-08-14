@@ -10,37 +10,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
-import { authorizeApi } from "@/lib/api/server-auth";
+import { withApiActivity } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ serial: string }> }
-) {
-  const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken, {
-    requiredScope: "read",
-    getPersistedKeys: () => composeServices(config).apiKeyAuth,
-  }))) {
-    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
-  }
+export const GET = withApiActivity({
+  requiredScope: "read",
+  handler: async (req, { params, activity }) => {
+    const config = loadConfig();
+    const { serial } = await params;
+    const jobSerial = req.nextUrl.searchParams.get("job_serial") ?? undefined;
+    const { sessionService } = composeServices(config);
+    const result = await sessionService.getPairingQr(serial, { jobSerial });
 
-  const { serial } = await params;
-  const jobSerial = req.nextUrl.searchParams.get("job_serial") ?? undefined;
-  const { sessionService } = composeServices(config);
-  const result = await sessionService.getPairingQr(serial, { jobSerial });
+    if (result === null) {
+      return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
+    }
 
-  if (result === null) {
-    return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
-  }
-
-  return NextResponse.json({
-    status: result.status,
-    qr_code: result.qrCode,
-    qr_serial: result.qrSerial,
-    expires_at: result.expiresAt,
-    ...(result.jobSerial !== undefined && { job_serial: result.jobSerial }),
-    ...(result.jobStatus !== undefined && { job_status: result.jobStatus }),
-  });
-}
+    if (result.jobSerial !== undefined) {
+      activity.setJobSerial(result.jobSerial);
+    }
+    return NextResponse.json({
+      status: result.status,
+      qr_code: result.qrCode,
+      qr_serial: result.qrSerial,
+      expires_at: result.expiresAt,
+      ...(result.jobSerial !== undefined && { job_serial: result.jobSerial }),
+      ...(result.jobStatus !== undefined && { job_status: result.jobStatus }),
+    });
+  },
+});

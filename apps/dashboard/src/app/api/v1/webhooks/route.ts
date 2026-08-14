@@ -5,9 +5,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
-import { authorizeApi } from "@/lib/api/server-auth";
 import { ValidationError } from "@/lib/api/domain/errors";
 import type { WebhookConfig } from "@/lib/api/domain/webhook-config";
+import { withApiActivity } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -30,48 +30,41 @@ function toWebhookConfigJson(cfg: WebhookConfig) {
   };
 }
 
-export async function GET(req: NextRequest) {
-  const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken, {
-    requiredScope: "read",
-    getPersistedKeys: () => composeServices(config).apiKeyAuth,
-  }))) {
-    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
-  }
-
-  const { webhookManagement } = composeServices(config);
-  const configs = await webhookManagement.listConfigs();
-  return NextResponse.json({ webhooks: configs.map(toWebhookConfigJson) });
-}
-
-export async function POST(req: NextRequest) {
-  const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken, {
-    requiredScope: "write",
-    getPersistedKeys: () => composeServices(config).apiKeyAuth,
-  }))) {
-    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
-  }
-
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
-  }
-
-  try {
+export const GET = withApiActivity({
+  requiredScope: "read",
+  handler: async (req) => {
+    const config = loadConfig();
     const { webhookManagement } = composeServices(config);
-    const cfg = await webhookManagement.createConfig({
-      phoneNumberId: asString(body.phone_number_id) ?? "",
-      webhookUrl: asString(body.webhook_url) ?? "",
-      webhookSecret: asString(body.webhook_secret) ?? undefined,
-    });
-    return NextResponse.json(toWebhookConfigJson(cfg), { status: 201 });
-  } catch (err) {
-    if (err instanceof ValidationError) {
-      return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+    const configs = await webhookManagement.listConfigs();
+    return NextResponse.json({ webhooks: configs.map(toWebhookConfigJson) });
+  },
+});
+
+export const POST = withApiActivity({
+  requiredScope: "write",
+  handler: async (req) => {
+    const config = loadConfig();
+
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
     }
-    throw err;
-  }
-}
+
+    try {
+      const { webhookManagement } = composeServices(config);
+      const cfg = await webhookManagement.createConfig({
+        phoneNumberId: asString(body.phone_number_id) ?? "",
+        webhookUrl: asString(body.webhook_url) ?? "",
+        webhookSecret: asString(body.webhook_secret) ?? undefined,
+      });
+      return NextResponse.json(toWebhookConfigJson(cfg), { status: 201 });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+      }
+      throw err;
+    }
+  },
+});

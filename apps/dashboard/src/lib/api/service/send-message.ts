@@ -40,7 +40,7 @@ export class SendMessageService implements SendMessagePort {
     if (outcome.status === "succeeded") {
       const wamid = extractWaMessageId(outcome.result);
       if (wamid !== null) {
-        return { status: "succeeded", wamid };
+        return { status: "succeeded", wamid, jobSerial: serial };
       }
       // The job succeeded but carried no wamid: a data anomaly. Surfaced as a
       // failed result so the HTTP adapter maps it to the same 500 envelope.

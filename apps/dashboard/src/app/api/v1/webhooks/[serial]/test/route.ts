@@ -12,7 +12,7 @@ import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
 import { RequestAbortedError, ValidationError } from "@/lib/api/domain/errors";
 import type { WebhookProbeResult } from "@/lib/api/domain/webhook-test";
-import { authorizeApi } from "@/lib/api/server-auth";
+import { withApiActivity } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -32,37 +32,30 @@ function toWebhookTestJson(result: WebhookProbeResult) {
   };
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ serial: string }> }
-) {
-  const config = loadConfig();
-  if (!(await authorizeApi(req, config.apiAuthToken, {
-    requiredScope: "write",
-    getPersistedKeys: () => composeServices(config).apiKeyAuth,
-  }))) {
-    return NextResponse.json({ error: { message: "Invalid OAuth access token", type: "OAuthException", code: 401 } }, { status: 401 });
-  }
+export const POST = withApiActivity({
+  requiredScope: "write",
+  handler: async (req, { params }) => {
+    const config = loadConfig();
+    const { serial } = await params;
 
-  const { serial } = await params;
+    try {
+      const { webhookTest } = composeServices(config);
+      const result = await webhookTest.test(serial, req.signal);
 
-  try {
-    const { webhookTest } = composeServices(config);
-    const result = await webhookTest.test(serial, req.signal);
+      if (result === null) {
+        return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
+      }
 
-    if (result === null) {
-      return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
+      return NextResponse.json({ webhook_test: toWebhookTestJson(result) });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+      }
+      if (err instanceof RequestAbortedError) {
+        throw err; // client is gone; do not map to a response
+      }
+      console.error(err);
+      return NextResponse.json({ error: { message: "Internal server error", type: "OAuthException", code: 500 } }, { status: 500 });
     }
-
-    return NextResponse.json({ webhook_test: toWebhookTestJson(result) });
-  } catch (err) {
-    if (err instanceof ValidationError) {
-      return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
-    }
-    if (err instanceof RequestAbortedError) {
-      throw err; // client is gone; do not map to a response
-    }
-    console.error(err);
-    return NextResponse.json({ error: { message: "Internal server error", type: "OAuthException", code: 500 } }, { status: 500 });
-  }
-}
+  },
+});
