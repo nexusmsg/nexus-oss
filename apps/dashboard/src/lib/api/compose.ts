@@ -62,7 +62,18 @@ export function composeServices(config: Config): WiredServices {
     timeoutMs: config.webhookTestTimeoutMs,
   });
 
-  const apiKeys: ApiKeyManagementServicePort = new ApiKeyManagementService(transport);
+  const apiKeys: ApiKeyManagementServicePort = new ApiKeyManagementService(transport, {
+    environment: undefined,
+    encryptionKeys: {
+      current: config.apiKeyEncryptionKey,
+      previous: config.apiKeyEncryptionKeyPrevious,
+    },
+  });
+
+  // Memoized startup NULL-ciphertext alarm: logs (never throws/blocks) if any
+  // key created after the ciphertext migration has a NULL ciphertext, which
+  // indicates the encryption key was unset at create time.
+  void runNullCiphertextAlarm(transport);
 
   // The transport satisfies the authorizer's persisted-key port structurally
   // (getKeyByHash + touchKeyLastUsed); expose only that slice.
@@ -78,4 +89,42 @@ export function composeServices(config: Config): WiredServices {
     apiKeyAuth,
     config,
   };
+}
+
+/**
+ * Fixed timestamp of the `key_ciphertext` migration. Keys created after this
+ * with a NULL ciphertext indicate the encryption key was unset at create time.
+ */
+const CIPHERTEXT_MIGRATION_AT = new Date("2026-08-13T00:00:00Z");
+
+/**
+ * Memoized, fire-and-forget startup alarm. Runs once on the first
+ * `composeServices()` call. Counts API keys created after the ciphertext
+ * migration that still have a NULL ciphertext and logs an alarm via
+ * `console.error` if any exist. Never throws and never blocks requests — a
+ * failure here is logged and swallowed.
+ */
+let nullCiphertextAlarmPromise: Promise<void> | null = null;
+function runNullCiphertextAlarm(transport: DrizzleTransport): Promise<void> {
+  if (nullCiphertextAlarmPromise === null) {
+    nullCiphertextAlarmPromise = (async () => {
+      try {
+        const count = await transport.countUnencryptedKeysSince(CIPHERTEXT_MIGRATION_AT);
+        if (count > 0) {
+          console.error(
+            `[api-key-alarm] ${count} API key(s) created after ` +
+              `${CIPHERTEXT_MIGRATION_AT.toISOString()} have a NULL ciphertext ` +
+              `(api_keys.key_ciphertext). This usually means API_KEY_ENCRYPTION_KEY ` +
+              `was unset at create time — those secrets are not recoverable for reveal.`,
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[api-key-alarm] failed to count unencrypted keys: ` +
+            `${(err as Error).message}`,
+        );
+      }
+    })();
+  }
+  return nullCiphertextAlarmPromise;
 }

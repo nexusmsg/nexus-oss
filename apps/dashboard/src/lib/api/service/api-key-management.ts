@@ -1,17 +1,22 @@
 /**
  * Application service implementing API-key management. Owns secure key
- * generation, hashing, and one-time plaintext return; delegates persistence to
- * the driven `ApiKeyTransport` port. Imports only domain + ports.
+ * generation, hashing, AES-256-GCM encryption-at-rest, and reveal (server-side
+ * decryption); delegates persistence to the driven `ApiKeyTransport` port.
+ * Imports only domain + ports + the crypto helper.
  *
  * Security contract (plan: key format is `waba_<environment>_<random-secret>`):
  * - The secret is `randomBytes(32)` (256 bits) hex-encoded, produced with
  *   `node:crypto`'s CSPRNG. The full secret is `waba_<env>_<64 hex chars>`.
- * - Only a SHA-256 hex digest of the full secret (`keyHash`) and a non-secret
- *   display prefix (`keyPrefix`) are persisted. The plaintext secret is
- *   returned exactly once, only from `createKey`, and is never stored, logged,
- *   or recoverable.
+ * - Persisted per key: a SHA-256 hex digest of the full secret (`keyHash`,
+ *   the auth lookup index), a non-secret display prefix (`keyPrefix`), and an
+ *   AES-256-GCM envelope of the full secret (`keyCiphertext`, enables
+ *   on-demand reveal). The plaintext secret is never stored or logged.
+ * - The plaintext is returned only from `createKey` (one-time) and from
+ *   `revealKey` (on demand, server-side decrypt with the configured key ring).
+ *   Keys created before ciphertext storage existed have `keyCiphertext ===
+ *   null` and are reported unrecoverable.
  * - Reads (`getKey`, `listKeys`, `updateKey`, `revokeKey`) return redacted
- *   records that omit `keyHash` (and `deletedAt`).
+ *   records that omit `keyHash`, `keyCiphertext`, and `deletedAt`.
  *
  * Environment source: the prefix's `<environment>` segment comes from
  * `API_KEY_ENV`, falling back to `NODE_ENV`, falling back to `"dev"`. The value
@@ -25,11 +30,22 @@ import type {
   ApiKeyStatus,
   CreateApiKeyInput,
 } from "../domain/api-key";
-import { ValidationError } from "../domain/errors";
+import {
+  ApiKeyRevokedError,
+  KeyEncryptionNotConfiguredError,
+  KeySecretNotRecoverableError,
+  ValidationError,
+} from "../domain/errors";
 import type {
   ApiKeyTransport,
   UpdateApiKeyInput,
 } from "../ports/api-key-transport";
+import {
+  decryptApiKeySecret,
+  encryptApiKeySecret,
+  parseApiKeyEncryptionKey,
+} from "../security/api-key-cipher";
+import type { KeyRing } from "../security/api-key-cipher";
 
 /** Key-prefix environment source; falls back to `NODE_ENV`, then `"dev"`. */
 const ENVIRONMENT_VAR = "API_KEY_ENV";
@@ -62,6 +78,14 @@ export interface ApiKeyManagementServicePort {
   ): Promise<RedactedApiKey | null>;
   /** Transition a key to `revoked`; null when absent. Idempotent. */
   revokeKey(serial: string): Promise<RedactedApiKey | null>;
+  /**
+   * Server-side reveal: decrypt and return the plaintext secret for a
+   * non-deleted key. Null when the key is absent. Throws
+   * `ApiKeyRevokedError` for revoked keys, `KeySecretNotRecoverableError`
+   * for pre-ciphertext keys (`keyCiphertext` null), and
+   * `KeyEncryptionNotConfiguredError` when no encryption key is configured.
+   */
+  revealKey(serial: string): Promise<{ secret: string } | null>;
 }
 
 /** Result of `createKey`: the persisted record plus the one-time plaintext. */
@@ -94,11 +118,19 @@ export interface ApiKeyManagementServiceOptions {
    * When omitted, resolved from `API_KEY_ENV` → `NODE_ENV` → `"dev"`.
    */
   environment?: string;
+  /**
+   * AES-256-GCM encryption key material (raw base64 env strings). `current` is
+   * used for encryption and decryption; `previous` is retained for decryption
+   * only during rotation. When unset, `createKey` and `revealKey` fail with
+   * `KeyEncryptionNotConfiguredError` (scoped to the api-keys feature).
+   */
+  encryptionKeys?: { current: string; previous?: string };
 }
 
 export class ApiKeyManagementService implements ApiKeyManagementServicePort {
   private readonly transport: ApiKeyTransport;
   private readonly environment: string;
+  private readonly encryptionKeys?: { current: string; previous?: string };
 
   constructor(
     transport: ApiKeyTransport,
@@ -109,6 +141,25 @@ export class ApiKeyManagementService implements ApiKeyManagementServicePort {
       options.environment !== undefined
         ? sanitizeApiKeyEnvironment(options.environment)
         : resolveApiKeyEnvironment();
+    this.encryptionKeys = options.encryptionKeys;
+  }
+
+  /** Current encryption key, parsed; throws when unconfigured. */
+  private currentEncryptionKey(): Buffer {
+    const raw = this.encryptionKeys?.current;
+    if (raw === undefined || raw.trim() === "") {
+      throw new KeyEncryptionNotConfiguredError();
+    }
+    return parseApiKeyEncryptionKey(raw);
+  }
+
+  /** Decryption ring: current plus (when set) the previous key. */
+  private decryptionRing(current: Buffer): KeyRing {
+    const previous = this.encryptionKeys?.previous;
+    if (previous === undefined || previous.trim() === "") {
+      return { current };
+    }
+    return { current, previous: parseApiKeyEncryptionKey(previous) };
   }
 
   async createKey(input: CreateApiKeyInput): Promise<CreateApiKeyResult> {
@@ -121,9 +172,28 @@ export class ApiKeyManagementService implements ApiKeyManagementServicePort {
       expiresAt: validated.expiresAt ?? null,
       keyPrefix: apiKeyPrefix(this.environment),
       keyHash: hashApiKeySecret(secret),
+      keyCiphertext: encryptApiKeySecret(secret, this.currentEncryptionKey()),
     });
 
     return { key: redactApiKey(key), secret };
+  }
+
+  async revealKey(serial: string): Promise<{ secret: string } | null> {
+    const key = await this.transport.getKey(serial);
+    if (key === null) {
+      return null;
+    }
+    if (key.status === "revoked") {
+      throw new ApiKeyRevokedError();
+    }
+    if (key.keyCiphertext === null) {
+      throw new KeySecretNotRecoverableError();
+    }
+    const secret = decryptApiKeySecret(
+      key.keyCiphertext,
+      this.decryptionRing(this.currentEncryptionKey()),
+    );
+    return { secret };
   }
 
   async getKey(serial: string): Promise<RedactedApiKey | null> {

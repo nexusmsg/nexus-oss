@@ -16,8 +16,11 @@ Path: `services/worker/`
 ## API keys — no worker changes
 
 The API-key feature lives entirely in the dashboard API
-(`apps/dashboard/src/app/api/v1/api-keys/**`, Drizzle transport, migration
-`000011_create_api_keys`). The worker has **no** API-key changes:
+(`apps/dashboard/src/app/api/v1/api-keys/**`, Drizzle transport, migrations
+`000011_create_api_keys` + `000012_add_api_key_ciphertext`). Since `000012`,
+secrets are encrypted at rest (AES-256-GCM, `key_ciphertext`) and can be
+revealed on demand via `GET /api/v1/api-keys/[serial]/secret` (server-side
+decryption). The worker has **no** API-key changes:
 
 - It does not read the `api_keys` table and has no dependency on it.
 - Its `INTERNAL_TOKEN`-gated routes (`GET /internal/v1/webhook-config`,

@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import * as apiKeys from "./api-keys/route";
 import * as apiKeySerial from "./api-keys/[serial]/route";
+import * as apiKeySecret from "./api-keys/[serial]/secret/route";
 import * as sessions from "./sessions/route";
 import * as sessionSerial from "./sessions/[serial]/route";
 import * as sessionStatus from "./sessions/[serial]/status/route";
@@ -97,6 +98,13 @@ const routes: RouteCase[] = [
     url: "http://localhost/api/v1/api-keys/s_1",
     expectedStatus: 200,
     call: (req) => apiKeySerial.DELETE(req, serialParams),
+  },
+  {
+    name: "GET /api/v1/api-keys/[serial]/secret",
+    method: "GET",
+    url: "http://localhost/api/v1/api-keys/s_1/secret",
+    expectedStatus: 200,
+    call: (req) => apiKeySecret.GET(req, serialParams),
   },
   {
     name: "GET /api/v1/sessions",
@@ -234,6 +242,7 @@ function serviceStubs() {
       getKey: vi.fn(async () => ({})),
       updateKey: vi.fn(async () => ({})),
       revokeKey: vi.fn(async () => ({})),
+      revealKey: vi.fn(async () => ({ secret: "waba_dev_s" })),
     },
     sessionService: {
       listSessions: vi.fn(async () => []),
@@ -383,6 +392,7 @@ describe("persisted-key authorization (API-5b)", () => {
       name: "test key",
       keyPrefix: "waba_dev_",
       keyHash: "a".repeat(64),
+      keyCiphertext: null,
       scope: "read",
       status: "active",
       expiresAt: null,

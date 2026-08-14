@@ -30,6 +30,18 @@ export interface Config {
    * endpoint is reported as timed out. Default 10000.
    */
   webhookTestTimeoutMs: number;
+  /**
+   * Base64-encoded 32-byte key used for AES-256-GCM encryption of API-key
+   * secrets at rest (`api_keys.key_ciphertext`). Empty string means encryption
+   * is not configured; the api-keys feature fails fast when it is required.
+   */
+  apiKeyEncryptionKey: string;
+  /**
+   * Previous base64-encoded 32-byte key for rotation. Retained so ciphertexts
+   * encrypted under the prior key remain decryptable during a key roll. Empty
+   * string when not rotating.
+   */
+  apiKeyEncryptionKeyPrevious: string;
 }
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
@@ -46,5 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     resultPollMs: readPositiveInt(env.RESULT_POLL_MS, 250),
     heartbeatTtlMs: readPositiveInt(env.HEARTBEAT_TTL_MS, 30000),
     webhookTestTimeoutMs: readPositiveInt(env.WEBHOOK_TEST_TIMEOUT_MS, 10000),
+    apiKeyEncryptionKey: env.API_KEY_ENCRYPTION_KEY ?? "",
+    apiKeyEncryptionKeyPrevious: env.API_KEY_ENCRYPTION_KEY_PREVIOUS ?? "",
   };
 }

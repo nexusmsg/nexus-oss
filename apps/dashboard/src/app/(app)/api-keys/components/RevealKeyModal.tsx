@@ -1,39 +1,65 @@
 "use client";
 
-/* ── Key revealed modal (UI-4) ──
+/* ── Key revealed modal ──
  *
- * One-time reveal for a freshly generated key. Matches the "Key Generated"
- * modal in design/dashboard/api-keys.html: a warning that the key won't be
- * shown again, the plaintext secret, a real Copy to Clipboard action with
- * success/failure feedback, and a Done button.
+ * Displays a plaintext API-key secret for copying. Supports two modes:
+ *
+ * - `generate` (default): shown once after key creation. Warning-tinted alert
+ *   encourages the user to save the key immediately.
+ * - `reveal`: shown when the user requests an existing key on demand.
+ *   Informational alert reminds them to store it securely.
  *
  * Security contract:
- * - The plaintext secret has a single transient owner: the page's
- *   `CreateApiKeyResult` state, which is dropped when the reveal modal closes
- *   (any path) and gone on page unmount. This modal renders it from that prop
- *   and never copies it into a second location, so there is no window where a
- *   stale plaintext could outlive the close.
- * - Existing-row keys never reach this modal (UI-3 keeps those Reveal/Copy
- *   actions disabled).
+ * - The plaintext secret has a single transient owner: the page's state, which
+ *   is dropped when the reveal modal closes (any path) and gone on page
+ *   unmount. This modal renders it from that prop and never copies it into a
+ *   second location, so there is no window where a stale plaintext could
+ *   outlive the close.
  * - The Copy action calls `navigator.clipboard.writeText` for real; feedback
  *   distinguishes a successful copy from a rejected/unavailable clipboard.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, ModalActions } from "@/components";
-import { IconCopy, IconWarning } from "@/components/icons";
+import { IconCopy, IconInfo, IconWarning } from "@/components/icons";
+
+type RevealKeyMode = "generate" | "reveal";
 
 interface RevealKeyModalProps {
   open: boolean;
-  /** One-time plaintext secret; null when nothing was generated yet. */
+  /** Plaintext secret; null when nothing to show yet. */
   secret: string | null;
   /** Close handler; the parent is responsible for dropping its copy too. */
   onClose: () => void;
+  /** "generate" = fresh creation; "reveal" = on-demand view of an existing key. */
+  mode?: RevealKeyMode;
 }
 
 type CopyState = "idle" | "success" | "error";
 
-export function RevealKeyModal({ open, secret, onClose }: RevealKeyModalProps) {
+const MODE_COPY: Record<
+  RevealKeyMode,
+  { title: string; alertVariant: "warning" | "info"; alertText: string }
+> = {
+  generate: {
+    title: "Key Generated",
+    alertVariant: "warning",
+    alertText:
+      "Save this key now. You can reveal it again from the key list.",
+  },
+  reveal: {
+    title: "Reveal Key",
+    alertVariant: "info",
+    alertText: "Copy this key and store it securely.",
+  },
+};
+
+export function RevealKeyModal({
+  open,
+  secret,
+  onClose,
+  mode = "generate",
+}: RevealKeyModalProps) {
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const mountedRef = useRef(true);
 
@@ -62,10 +88,17 @@ export function RevealKeyModal({ open, secret, onClose }: RevealKeyModalProps) {
     }
   };
 
+  const { title, alertVariant, alertText } = MODE_COPY[mode];
+  const AlertIcon = mode === "generate" ? IconWarning : IconInfo;
+
   return (
-    <Modal open={open} onClose={handleClose} title="Key Generated">
-      <Alert variant="warning" icon={<IconWarning size={16} />} className="mb-4">
-        <span>Copy this key now. It won&apos;t be shown again.</span>
+    <Modal open={open} onClose={handleClose} title={title}>
+      <Alert
+        variant={alertVariant}
+        icon={<AlertIcon size={16} />}
+        className="mb-4"
+      >
+        <span>{alertText}</span>
       </Alert>
 
       {/* The plaintext renders only while the modal is open (and prop is set). */}

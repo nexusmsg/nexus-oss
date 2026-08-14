@@ -45,6 +45,7 @@ function makeKey(overrides: Partial<ApiKey> = {}): ApiKey {
     name: "test key",
     keyPrefix: "waba_dev_",
     keyHash: hashApiKeySecret(KEY_CREDENTIAL),
+    keyCiphertext: null,
     scope: "read",
     status: "active",
     expiresAt: null,

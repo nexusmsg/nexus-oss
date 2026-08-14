@@ -9,7 +9,12 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { ApiKey, ApiKeyScope } from "../domain/api-key";
-import { ValidationError } from "../domain/errors";
+import {
+  ApiKeyRevokedError,
+  KeyEncryptionNotConfiguredError,
+  KeySecretNotRecoverableError,
+  ValidationError,
+} from "../domain/errors";
 import type {
   ApiKeyTransport,
   CreateApiKeyInput,
@@ -41,6 +46,7 @@ class FakeTransport implements ApiKeyTransport {
       name: "seeded",
       keyPrefix: "waba_test_",
       keyHash: "seeded-hash",
+      keyCiphertext: null,
       scope: "read",
       status: "active",
       expiresAt: null,
@@ -64,6 +70,7 @@ class FakeTransport implements ApiKeyTransport {
       name: input.name,
       keyPrefix: input.keyPrefix,
       keyHash: input.keyHash,
+      keyCiphertext: input.keyCiphertext,
       scope: input.scope,
       status: "active",
       expiresAt: input.expiresAt ?? null,
@@ -142,8 +149,15 @@ const PAST = "2000-01-01T00:00:00.000Z";
 /** Full secret shape: `waba_<env>_` + 32 bytes hex (64 chars). */
 const KEY_SECRET_FORMAT = /^waba_test_[0-9a-f]{64}$/;
 
+/** 32-byte test encryption keys (base64), matching `parseApiKeyEncryptionKey`. */
+const TEST_ENC_KEY = Buffer.alloc(32, 1).toString("base64");
+const OTHER_ENC_KEY = Buffer.alloc(32, 2).toString("base64");
+
 function makeService(transport: ApiKeyTransport): ApiKeyManagementService {
-  return new ApiKeyManagementService(transport, { environment: "test" });
+  return new ApiKeyManagementService(transport, {
+    environment: "test",
+    encryptionKeys: { current: TEST_ENC_KEY },
+  });
 }
 
 /** Runtime view used to assert that no secret material leaks onto records. */
@@ -181,6 +195,7 @@ describe("ApiKeyManagementService", () => {
     it("honors an explicit environment option in the prefix", async () => {
       const service = new ApiKeyManagementService(new FakeTransport(), {
         environment: "prod",
+        encryptionKeys: { current: TEST_ENC_KEY },
       });
 
       const result = await service.createKey({ name: "prod key", scope: "full" });
@@ -485,6 +500,109 @@ describe("ApiKeyManagementService", () => {
 
     it("keeps generated secrets aligned with the resolved environment", () => {
       expect(generateApiKeySecret("dev")).toMatch(/^waba_dev_[0-9a-f]{64}$/);
+    });
+  });
+
+  describe("revealKey", () => {
+    it("returns the exact secret for a key created through the service", async () => {
+      const service = makeService(new FakeTransport());
+
+      const created = await service.createKey({ name: "reveal me", scope: "read" });
+      const revealed = await service.revealKey(created.key.serial);
+
+      expect(revealed).toEqual({ secret: created.secret });
+    });
+
+    it("persists a ciphertext envelope, never the plaintext", async () => {
+      const transport = new FakeTransport();
+      const service = makeService(transport);
+
+      const created = await service.createKey({ name: "envelope", scope: "read" });
+
+      const stored = transport.createCalls[0].keyCiphertext;
+      expect(stored).toMatch(/^v1\.[0-9a-f]{8}\./);
+      expect(stored).not.toContain(created.secret);
+      expect(stored).not.toBe(transport.createCalls[0].keyHash);
+    });
+
+    it("decrypts envelopes written by a previous key during rotation", async () => {
+      const transport = new FakeTransport();
+      const service = new ApiKeyManagementService(transport, {
+        environment: "test",
+        encryptionKeys: { current: TEST_ENC_KEY },
+      });
+
+      const created = await service.createKey({ name: "rotating", scope: "read" });
+
+      // Simulate rotation: old key moves to `previous`, a new key becomes current.
+      const rotated = new ApiKeyManagementService(transport, {
+        environment: "test",
+        encryptionKeys: { current: OTHER_ENC_KEY, previous: TEST_ENC_KEY },
+      });
+
+      await expect(rotated.revealKey(created.key.serial)).resolves.toEqual({
+        secret: created.secret,
+      });
+    });
+
+    it("returns null for an unknown serial", async () => {
+      const service = makeService(new FakeTransport());
+
+      await expect(service.revealKey("does-not-exist")).resolves.toBeNull();
+    });
+
+    it("rejects a revoked key", async () => {
+      const transport = new FakeTransport();
+      const service = makeService(transport);
+
+      const created = await service.createKey({ name: "doomed", scope: "read" });
+      await service.revokeKey(created.key.serial);
+
+      await expect(service.revealKey(created.key.serial)).rejects.toThrow(
+        ApiKeyRevokedError,
+      );
+    });
+
+    it("rejects a pre-ciphertext key (keyCiphertext null)", async () => {
+      const transport = new FakeTransport();
+      transport.seed({ serial: "key_legacy", keyCiphertext: null });
+
+      const service = makeService(transport);
+
+      await expect(service.revealKey("key_legacy")).rejects.toThrow(
+        KeySecretNotRecoverableError,
+      );
+    });
+
+    it("fails closed when no encryption key is configured", async () => {
+      const transport = new FakeTransport();
+      const bare = new ApiKeyManagementService(transport, {
+        environment: "test",
+      });
+
+      await expect(
+        bare.createKey({ name: "no key", scope: "read" }),
+      ).rejects.toThrow(KeyEncryptionNotConfiguredError);
+
+      const created = await makeService(transport).createKey({
+        name: "has key",
+        scope: "read",
+      });
+      await expect(bare.revealKey(created.key.serial)).rejects.toThrow(
+        KeyEncryptionNotConfiguredError,
+      );
+    });
+
+    it("never returns ciphertext or hash on redacted reads", async () => {
+      const transport = new FakeTransport();
+      const service = makeService(transport);
+
+      const created = await service.createKey({ name: "redacted", scope: "read" });
+      const read = await service.getKey(created.key.serial);
+
+      const record = asRecord(read);
+      expect(record.keyCiphertext).toBeUndefined();
+      expect(record.keyHash).toBeUndefined();
     });
   });
 });

@@ -25,6 +25,8 @@ export interface CreateApiKeyInput extends DomainCreateApiKeyInput {
   keyPrefix: string;
   /** SHA-256 hex digest of the full key secret. Never the plaintext. */
   keyHash: string;
+  /** AES-256-GCM envelope of the full key secret; enables on-demand reveal. */
+  keyCiphertext: string;
 }
 
 /** Partial update: only present fields are written. `expiresAt: null` clears expiry. */

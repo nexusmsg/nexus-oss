@@ -11,8 +11,9 @@
  * `apiPost` / `apiPatch` / `apiDelete` and normalizes failures into `ApiError`.
  * Types come from `src/lib/api/types.ts`.
  *
- * Redaction contract: only `create` returns the plaintext `secret`, and exactly
- * once. `list`, `update`, and `revoke` operate on redacted records.
+ * Redaction contract: only `create` returns the plaintext `secret` (one-time)
+ * and `reveal` fetches it on demand (authenticated). `list`, `update`, and
+ * `revoke` operate on redacted records. `reveal` does not mutate list state.
  *
  * State updates after unmount are guarded via `mountedRef`; a pending mutation
  * whose continuation resolves after unmount stops before touching state.
@@ -22,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createApiKey,
   listApiKeys,
+  revealApiKeySecret,
   revokeApiKey,
   updateApiKey,
 } from "@/lib/api/api-keys";
@@ -48,6 +50,7 @@ export interface UseApiKeysReturn {
   create: (input: CreateApiKeyInput) => Promise<CreateApiKeyResult>;
   update: (serial: string, input: UpdateApiKeyInput) => Promise<ApiKey>;
   revoke: (serial: string) => Promise<void>;
+  reveal: (serial: string) => Promise<string>;
 }
 
 export function useApiKeys(): UseApiKeysReturn {
@@ -109,5 +112,14 @@ export function useApiKeys(): UseApiKeysReturn {
     [refresh],
   );
 
-  return { keys, loading, error, refresh, create, update, revoke };
+  // Reveal is read-only: it does not mutate list state, so no refresh. A failed
+  // reveal rejects with the ApiError message; the caller UI handles display.
+  const reveal = useCallback(
+    async (serial: string): Promise<string> => {
+      return revealApiKeySecret(serial);
+    },
+    [],
+  );
+
+  return { keys, loading, error, refresh, create, update, revoke, reveal };
 }

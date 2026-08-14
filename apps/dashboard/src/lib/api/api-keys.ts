@@ -5,13 +5,15 @@
  * with the WABA envelope normalized by the client.
  *
  * Redaction contract: the plaintext secret is returned only by `createApiKey`
- * (one-time). `listApiKeys`, `getApiKey`, `updateApiKey`, and `revokeApiKey`
- * return redacted records and never include the secret.
+ * (one-time) and by `revealApiKeySecret` (on demand, authenticated).
+ * `listApiKeys`, `getApiKey`, `updateApiKey`, and `revokeApiKey` return redacted
+ * records and never include the secret.
  */
 
 import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
 import type {
   ApiKey,
+  ApiKeySecretResponse,
   ApiKeysListResponse,
   CreateApiKeyInput,
   CreateApiKeyResult,
@@ -47,4 +49,12 @@ export async function updateApiKey(
 /** Revoke a key. Idempotent; the key stays visible in list/get afterwards. */
 export async function revokeApiKey(serial: string): Promise<void> {
   await apiDelete(`/api/v1/api-keys/${encodeURIComponent(serial)}`);
+}
+
+/** Fetch and decrypt an existing key's plaintext secret (on-demand reveal). */
+export async function revealApiKeySecret(serial: string): Promise<string> {
+  const res = await apiGet<ApiKeySecretResponse>(
+    `/api/v1/api-keys/${encodeURIComponent(serial)}/secret`,
+  );
+  return res.secret;
 }

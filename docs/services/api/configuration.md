@@ -13,6 +13,8 @@ variables.
 | `SUPABASE_SERVICE_ROLE_KEY` | — (required) | Service-role key (legacy Hono surface); dev = HS256 JWT `{"role":"postgres"}` signed with `PGRST_JWT_SECRET` |
 | `API_AUTH_TOKEN` | `` (empty) | Bootstrap Bearer token for `/api/v1/*` and management routes; also the seed credential for persisted API keys. Bearer only; empty closes every public route |
 | `API_KEY_ENV` | `NODE_ENV` → `dev` | Environment label embedded in generated key prefixes (`waba_<env>_…`); normalized to `[a-z0-9-]` by the API-key service |
+| `API_KEY_ENCRYPTION_KEY` | `` (empty) | Base64 32-byte AES-256-GCM key for API-key secrets at rest (`key_ciphertext`). Required for `POST /api/v1/api-keys` and the reveal route; when unset, create/reveal fail with a config error scoped to the api-keys feature |
+| `API_KEY_ENCRYPTION_KEY_PREVIOUS` | `` (empty) | Previous encryption key, retained for reads only during rotation. Set it to the old key before replacing `API_KEY_ENCRYPTION_KEY`; reveals keep working, then drop it once re-encryption/rotation completes |
 | `INTERNAL_TOKEN` | `` (empty) | Bearer token for `/internal/*` routes — strictly isolated from `API_AUTH_TOKEN` and persisted keys; empty disables them (401) |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3002` | Comma-separated allow-list of origins allowed to call `/api/v1/*` cross-origin; empty string disables CORS |
 | `SEND_TIMEOUT_MS` | `25000` | Max wall-clock time to wait for a job terminal state |

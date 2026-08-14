@@ -27,6 +27,7 @@ import {
   GET as apiKeyGet,
   PATCH as apiKeyPatch,
 } from "./[serial]/route";
+import { GET as apiKeySecretGet } from "./[serial]/secret/route";
 import { GET as sessionsList } from "../sessions/route";
 import { PATCH as webhookPatch } from "../webhooks/[serial]/route";
 import { GET as internalWebhookConfig } from "../../internal/v1/webhook-config/route";
@@ -84,6 +85,8 @@ describe.skipIf(!TEST_DATABASE_URL)(
       process.env.API_AUTH_TOKEN = BOOTSTRAP_TOKEN;
       process.env.INTERNAL_TOKEN = INTERNAL_TOKEN;
       process.env.API_KEY_ENV = "itest";
+      // 32-byte key for the encrypted-at-rest reveal path (create requires it).
+      process.env.API_KEY_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
       sql = postgres(TEST_DATABASE_URL, { max: 1 });
 
       // Seed one `full` and one `read` key through the real create route.
@@ -158,6 +161,63 @@ describe.skipIf(!TEST_DATABASE_URL)(
       expect(body.key).not.toHaveProperty("keyHash");
 
       serials.push(body.key.serial);
+    });
+
+    it("reveals the exact plaintext secret through the secret route", async () => {
+      const res = await apiKeySecretGet(
+        bearer("GET", `/api/v1/api-keys/${fullSerial}/secret`, BOOTSTRAP_TOKEN),
+        serialParams(fullSerial),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ secret: fullSecret });
+    });
+
+    it("returns 410 for a pre-ciphertext row (key_ciphertext NULL)", async () => {
+      const [legacy] = await sql!`
+        insert into api_keys (name, key_prefix, key_hash, key_ciphertext, scope, status)
+        values ('itest-legacy', 'waba_itest_', ${"f".repeat(64)}, NULL, 'read', 'active')
+        returning serial
+      `;
+      const legacySerial = legacy.serial as string;
+      serials.push(legacySerial);
+
+      const res = await apiKeySecretGet(
+        bearer("GET", `/api/v1/api-keys/${legacySerial}/secret`, BOOTSTRAP_TOKEN),
+        serialParams(legacySerial),
+      );
+
+      expect(res.status).toBe(410);
+      expect(await res.json()).toEqual({
+        error: { message: "secret is not recoverable for this key", type: "OAuthException", code: 410 },
+      });
+    });
+
+    it("blocks reveal for a revoked key (409), server-side", async () => {
+      const created = await apiKeysCreate(
+        bearer("POST", "/api/v1/api-keys", BOOTSTRAP_TOKEN, {
+          name: "itest-reveal-revoke",
+          scope: "read",
+        }),
+      );
+      const createdBody = (await created.json()) as CreateResponse;
+      serials.push(createdBody.key.serial);
+
+      const revoked = await apiKeyRevoke(
+        bearer("DELETE", `/api/v1/api-keys/${createdBody.key.serial}`, BOOTSTRAP_TOKEN),
+        serialParams(createdBody.key.serial),
+      );
+      expect(revoked.status).toBe(200);
+
+      const res = await apiKeySecretGet(
+        bearer("GET", `/api/v1/api-keys/${createdBody.key.serial}/secret`, BOOTSTRAP_TOKEN),
+        serialParams(createdBody.key.serial),
+      );
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        error: { message: "API key is revoked", type: "OAuthException", code: 409 },
+      });
     });
 
     it("lists redacted keys through the management route", async () => {

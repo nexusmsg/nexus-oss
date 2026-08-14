@@ -272,6 +272,10 @@ export const apiKeys = pgTable(
     name: text("name").notNull(),
     keyPrefix: text("key_prefix").notNull(),
     keyHash: text("key_hash").notNull(),
+    // Nullable AES-256-GCM envelope of the full key secret, enabling on-demand
+    // reveal. NULL = pre-migration key whose plaintext was never persisted.
+    // `keyHash` remains the authentication lookup; this column is additive.
+    keyCiphertext: text("key_ciphertext"),
     scope: text("scope")
       .notNull()
       .default("read")

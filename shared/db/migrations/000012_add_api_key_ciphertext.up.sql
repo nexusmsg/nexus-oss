@@ -1,0 +1,12 @@
+-- API key reveal refactor (M1): add nullable ciphertext for on-demand reveal.
+--
+-- Migration 000012 (paired with 000011; 000006 remains an intentional gap).
+--
+-- Adds `key_ciphertext` (text, nullable) to `public.api_keys`. New keys store
+-- an AES-256-GCM envelope of the full secret so it can be revealed on demand.
+--
+-- NULL semantics: a NULL `key_ciphertext` means a pre-migration key whose
+-- plaintext was never persisted and therefore cannot be recovered (the original
+-- contract stands). `key_hash` is retained and unchanged as the authentication
+-- lookup path (constant-time, unique index) — encryption is strictly additive.
+alter table public.api_keys add column if not exists key_ciphertext text;

@@ -1,6 +1,6 @@
 "use client";
 
-/* ── API Keys page (UI-2 static composition) ──
+/* ── API Keys page ──
  *
  * Matches design/dashboard/api-keys.html: page header with Generate Key CTA,
  * conditional expiring-soon warning, key-count card header with a local status
@@ -17,19 +17,19 @@
  *   `useApiKeys().update` / `useApiKeys().revoke` respectively; each refreshes
  *   the list afterwards. The row is identified by serial, so the list stays
  *   correct even if a name changes or a key is revoked.
- * - UI-3: Reveal/Copy are permanently unavailable for existing rows — the
- *   plaintext secret is never persisted, so they carry an explanatory disabled
- *   affordance (tooltip/title/aria-disabled) instead of pretending a value
- *   exists.
+ * - UI-6: Reveal/Copy are functional for active keys. Reveal fetches the
+ *   plaintext secret via the hook and displays it in the modal (reused).
+ *   Copy fetches the secret and writes it directly to the clipboard. Both
+ *   actions are disabled for revoked keys with an explanatory tooltip.
  * - The Key cell shows the redacted prefix with a decorative mask; the
- *   plaintext secret never reaches the client (the management API returns
- *   only `key_prefix`).
+ *   plaintext secret never reaches the client through the list API (only
+ *   `key_prefix` is exposed).
  * - Display status is derived locally: `revoked` (from the wire status),
  *   `expiring` (active with < 30 days until expiry), else `active`.
  * - Loading skeleton, error banner, and empty state are preserved from UI-1.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Badge,
@@ -161,18 +161,9 @@ function ScopeBadge({ scope }: { scope: ApiKeyScope }) {
 
 /* ── Row actions ──
  *
- * Security invariant: existing keys are unrecoverable. The management API
- * persists only a SHA-256 hash plus a display prefix, so Reveal/Copy can never
- * act on a real plaintext value. They stay visible for layout parity but render
- * as disabled affordances whose tooltip/title explain why (UI-3).
- *
- * Rename/Revoke (UI-5) are functional: they surface a confirm modal that calls
- * `useApiKeys().update` / `useApiKeys().revoke`, which refresh the list.
+ * Reveal/Copy are functional for active keys (UI-6) and disabled for revoked
+ * keys with an explanatory tooltip. Rename/Revoke (UI-5) are always functional.
  */
-
-/** Shared reason used by the Reveal/Copy explanatory affordances. */
-const SECRET_NOT_RECOVERABLE =
-  "the full secret isn't stored after creation and can't be recovered";
 
 interface KeyAction {
   label: string;
@@ -180,8 +171,12 @@ interface KeyAction {
   danger?: boolean;
   /** Tooltip/title text; when set, replaces the plain action label. */
   explanation?: string;
-  /** When set, the action is enabled and invokes this handler (UI-5). */
+  /** When set, the action is enabled and invokes this handler. */
   onClick?: () => void;
+  /** Show a loading spinner on the button. */
+  loading?: boolean;
+  /** Brief visual feedback after a clipboard action. */
+  feedback?: "success" | "error" | null;
 }
 
 function RowAction({ name, action }: { name: string; action: KeyAction }) {
@@ -197,10 +192,13 @@ function RowAction({ name, action }: { name: string; action: KeyAction }) {
         aria-label={`${action.label} ${name}`}
         aria-disabled={disabled ? "true" : undefined}
         disabled={disabled}
+        loading={action.loading}
         onClick={action.onClick}
         className={cx(
-          action.danger &&
+          (action.danger || action.feedback === "error") &&
             "border-danger/60 text-danger hover:border-danger hover:text-danger hover:bg-danger/10",
+          action.feedback === "success" &&
+            "border-success/60 text-success",
         )}
       >
         {action.icon}
@@ -209,25 +207,57 @@ function RowAction({ name, action }: { name: string; action: KeyAction }) {
   );
 }
 
+type CopyFeedbackState = {
+  serial: string;
+  state: "success" | "error";
+  message?: string;
+} | null;
+
 function KeyActions({
   name,
+  status,
+  onReveal,
+  onCopy,
+  revealLoading,
+  copyFeedback,
   onRename,
   onRevoke,
 }: {
   name: string;
+  status: ApiKey["status"];
+  onReveal?: () => void;
+  onCopy?: () => void;
+  revealLoading?: boolean;
+  copyFeedback?: "success" | "error" | null;
+  copyError?: string;
   onRename?: () => void;
   onRevoke?: () => void;
 }) {
+  const isActive = status === "active";
+
+  const copyHint =
+    copyFeedback === "success"
+      ? "Copied to clipboard"
+      : copyFeedback === "error"
+        ? "Failed to copy — try selecting the key and copying manually"
+        : undefined;
+
   const actions: KeyAction[] = [
     {
       label: "Reveal",
       icon: <IconEye size={13} />,
-      explanation: `Nothing to reveal — ${SECRET_NOT_RECOVERABLE}.`,
+      onClick: isActive ? onReveal : undefined,
+      loading: revealLoading,
+      explanation: isActive
+        ? undefined
+        : "This key is revoked — the secret is not available.",
     },
     {
       label: "Copy",
       icon: <IconCopy size={13} />,
-      explanation: `Nothing to copy — ${SECRET_NOT_RECOVERABLE}.`,
+      onClick: isActive ? onCopy : undefined,
+      explanation: copyHint ?? (isActive ? undefined : "This key is revoked — the secret is not available."),
+      feedback: copyFeedback,
     },
     { label: "Rename", icon: <IconEdit size={13} />, onClick: onRename },
     { label: "Revoke", icon: <IconTrash size={13} />, danger: true, onClick: onRevoke },
@@ -244,7 +274,18 @@ function KeyActions({
 /* ── Page ── */
 
 export default function ApiKeysPage() {
-  const { keys, loading, error, refresh, create, update, revoke } = useApiKeys();
+  const hookReturn = useApiKeys();
+  const {
+    keys,
+    loading,
+    error,
+    refresh,
+    create,
+    update,
+    revoke,
+    reveal,
+  } = hookReturn;
+
   const [filter, setFilter] = useState<StatusFilter>("all");
   // Snapshot "now" once at mount so derived labels are pure functions of state.
   const [now] = useState(() => Date.now());
@@ -252,6 +293,17 @@ export default function ApiKeysPage() {
   // UI-4 generate flow: the form modal and the one-time reveal result.
   const [generateOpen, setGenerateOpen] = useState(false);
   const [revealed, setRevealed] = useState<CreateApiKeyResult | null>(null);
+
+  // UI-6 on-demand reveal flow: separate state from the generate flow.
+  const [revealTarget, setRevealTarget] = useState<ApiKey | null>(null);
+  const [revealSecret, setRevealSecret] = useState<string | null>(null);
+  const [revealLoading, setRevealLoading] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // UI-6 copy feedback: transient success/error per row.
+  const [copyFeedback, setCopyFeedback] = useState<CopyFeedbackState>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // UI-5 mutations: the key being renamed/revoked (identified by serial).
   const [renameTarget, setRenameTarget] = useState<ApiKey | null>(null);
@@ -265,7 +317,63 @@ export default function ApiKeysPage() {
   /** Closing the reveal modal drops the only copy of the plaintext secret. */
   const handleRevealClose = useCallback(() => {
     setRevealed(null);
+    setRevealSecret(null);
+    setRevealTarget(null);
+    setRevealError(null);
+    setCopyFeedback(null);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
   }, []);
+
+  /** UI-6: Reveal row action — fetch secret and open modal. */
+  const handleRowReveal = useCallback(
+    async (key: ApiKey) => {
+      // Clear any previous error feedback.
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      setRevealError(null);
+      setRevealTarget(key);
+      setRevealLoading(true);
+      try {
+        const secret = await reveal(key.serial);
+        setRevealSecret(secret);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Failed to reveal key";
+        setRevealError(message);
+        // Auto-dismiss error after 5 seconds.
+        errorTimerRef.current = setTimeout(() => {
+          setRevealError(null);
+          setRevealTarget(null);
+        }, 5000);
+      } finally {
+        setRevealLoading(false);
+      }
+    },
+    [reveal],
+  );
+
+  /** UI-6: Copy row action — fetch secret and write to clipboard. */
+  const handleRowCopy = useCallback(
+    async (serial: string) => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      setCopyFeedback(null);
+      try {
+        const secret = await reveal(serial);
+        if (typeof navigator.clipboard?.writeText !== "function") {
+          throw new Error("Clipboard unavailable");
+        }
+        await navigator.clipboard.writeText(secret);
+        setCopyFeedback({ serial, state: "success" });
+        copyTimerRef.current = setTimeout(() => setCopyFeedback(null), 2000);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Failed to copy key";
+        setCopyFeedback({ serial, state: "error", message });
+        copyTimerRef.current = setTimeout(() => setCopyFeedback(null), 4000);
+      }
+    },
+    [reveal],
+  );
 
   const expiringSummary = useMemo(() => {
     const expiring = keys.filter(
@@ -451,9 +559,29 @@ export default function ApiKeysPage() {
                     <TableCell>
                       <KeyActions
                         name={key.name}
+                        status={key.status}
+                        onReveal={() => void handleRowReveal(key)}
+                        onCopy={() => void handleRowCopy(key.serial)}
+                        revealLoading={
+                          revealLoading && revealTarget?.serial === key.serial
+                        }
+                        copyFeedback={
+                          copyFeedback?.serial === key.serial
+                            ? copyFeedback.state
+                            : null
+                        }
                         onRename={() => setRenameTarget(key)}
                         onRevoke={() => setRevokeTarget(key)}
                       />
+                      {/* UI-6: per-row reveal error, shown briefly after a failed fetch. */}
+                      {revealError && revealTarget?.serial === key.serial && (
+                        <p
+                          role="alert"
+                          className="mt-1.5 text-xs text-danger"
+                        >
+                          {revealError}
+                        </p>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -482,7 +610,16 @@ export default function ApiKeysPage() {
       />
       <RevealKeyModal
         open={revealed !== null}
+        mode="generate"
         secret={revealed?.secret ?? null}
+        onClose={handleRevealClose}
+      />
+
+      {/* UI-6 on-demand reveal: fetches secret then opens modal in "reveal" mode. */}
+      <RevealKeyModal
+        open={revealSecret !== null}
+        mode="reveal"
+        secret={revealSecret}
         onClose={handleRevealClose}
       />
 

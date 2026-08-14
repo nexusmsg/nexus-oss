@@ -239,6 +239,11 @@ export interface ApiKeysListResponse {
   api_keys: ApiKey[];
 }
 
+/** `GET /api/v1/api-keys/:serial/secret` response — the decrypted plaintext secret. */
+export interface ApiKeySecretResponse {
+  secret: string;
+}
+
 /** The WABA error envelope body: `{ error: { message, type, code } }`. */
 export interface ApiErrorShape {
   error?: {

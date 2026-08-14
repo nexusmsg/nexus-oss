@@ -6,6 +6,11 @@
  * Only a SHA-256 hex digest of the full secret (`keyHash`) and a non-secret
  * display prefix (`keyPrefix`) are stored; the plaintext secret is returned
  * exactly once at creation and never persisted, logged, or recoverable.
+ *
+ * `keyCiphertext` is a nullable AES-256-GCM envelope of the full secret that
+ * enables on-demand reveal. NULL = a pre-migration key whose plaintext was
+ * never persisted and therefore cannot be recovered. `keyHash` stays the
+ * authentication lookup; the ciphertext is strictly additive storage.
  */
 
 export type ApiKeyScope = "read" | "write" | "full";
@@ -19,6 +24,11 @@ export interface ApiKey {
   keyPrefix: string;
   /** SHA-256 hex digest of the full key secret. Never returned. */
   keyHash: string;
+  /**
+   * AES-256-GCM envelope of the full key secret; enables on-demand reveal.
+   * Null = pre-migration key whose plaintext was never persisted.
+   */
+  keyCiphertext: string | null;
   scope: ApiKeyScope;
   status: ApiKeyStatus;
   /** Null = key never expires. */

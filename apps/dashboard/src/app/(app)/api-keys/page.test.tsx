@@ -30,9 +30,15 @@ function makeKey(overrides: Partial<ApiKey> = {}): ApiKey {
   };
 }
 
+/** Shape of the mocked hook return, including the `reveal` function
+ *  that the backend lane adds in parallel. */
+type MockHookReturn = UseApiKeysReturn & {
+  reveal: (serial: string) => Promise<string>;
+};
+
 function mockUseApiKeys(
   keys: ApiKey[],
-  overrides: Partial<UseApiKeysReturn> = {},
+  overrides: Partial<MockHookReturn> = {},
 ) {
   mockedUseApiKeys.mockReturnValue({
     keys,
@@ -42,8 +48,9 @@ function mockUseApiKeys(
     create: vi.fn(),
     update: vi.fn(),
     revoke: vi.fn(),
+    reveal: vi.fn(),
     ...overrides,
-  } as UseApiKeysReturn);
+  } as MockHookReturn);
 }
 
 beforeEach(() => {
@@ -87,7 +94,7 @@ describe("ApiKeysPage (UI-2 static composition)", () => {
     expect(within(prodRow).getByText("2026-08-10")).toBeTruthy();
     expect(within(prodRow).getByText("never")).toBeTruthy();
     expect(within(prodRow).getByText("active")).toBeTruthy();
-    // Reveal / Copy / Rename / Revoke — all present but non-functional.
+    // Reveal / Copy / Rename / Revoke — all four present.
     expect(within(prodRow).getAllByRole("button")).toHaveLength(4);
 
     const stagingRow = screen.getByRole("row", { name: /Staging/ });
@@ -202,9 +209,9 @@ describe("ApiKeysPage (UI-2 static composition)", () => {
   });
 });
 
-describe("ApiKeysPage (UI-3 secure visibility)", () => {
-  it("marks Reveal/Copy as unavailable with a secure explanation and keeps Rename/Revoke placeholders", () => {
-    mockUseApiKeys([makeKey({ name: "Production" })]);
+describe("ApiKeysPage (UI-6 reveal/copy row actions)", () => {
+  it("enables Reveal and Copy for active keys", () => {
+    mockUseApiKeys([makeKey({ name: "Production", status: "active" })]);
     render(<ApiKeysPage />);
 
     const row = screen.getByRole("row", { name: /Production/ });
@@ -214,62 +221,176 @@ describe("ApiKeysPage (UI-3 secure visibility)", () => {
     const copy = within(row).getByRole("button", {
       name: "Copy Production",
     });
-    const rename = within(row).getByRole("button", {
-      name: "Rename Production",
-    });
-    const revoke = within(row).getByRole("button", {
-      name: "Revoke Production",
-    });
 
-    // Every existing-key action stays a disabled affordance.
-    for (const btn of [reveal, copy, rename, revoke]) {
-      expect(btn.getAttribute("aria-disabled")).toBe("true");
-    }
-
-    // Reveal/Copy explain why there is nothing to show or copy.
-    expect(reveal.getAttribute("title")).toContain("Nothing to reveal");
-    expect(reveal.getAttribute("title")).toContain("secret isn't stored");
-    expect(copy.getAttribute("title")).toContain("Nothing to copy");
-    expect(copy.getAttribute("title")).toContain("secret isn't stored");
-
-    // The explanatory tooltips are present in the DOM (CSS-only, always mounted).
-    expect(screen.getAllByRole("tooltip").length).toBeGreaterThanOrEqual(4);
-    expect(
-      screen.getByRole("tooltip", { name: /Nothing to reveal/ }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("tooltip", { name: /Nothing to copy/ }),
-    ).toBeTruthy();
-
-    // Rename/Revoke keep their plain placeholder labels for later phases.
-    expect(rename.getAttribute("title")).toBe("Rename");
-    expect(revoke.getAttribute("title")).toBe("Revoke");
+    // Active keys: neither button is disabled.
+    expect(reveal.getAttribute("aria-disabled")).toBeNull();
+    expect(copy.getAttribute("aria-disabled")).toBeNull();
   });
 
-  it("never reveals a plaintext secret or copies it to the clipboard for existing keys", async () => {
+  it("disables Reveal and Copy for revoked keys with explanatory tooltips", () => {
+    mockUseApiKeys([
+      makeKey({ name: "Old Key", status: "revoked" }),
+    ]);
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Old Key/ });
+    const reveal = within(row).getByRole("button", {
+      name: "Reveal Old Key",
+    });
+    const copy = within(row).getByRole("button", {
+      name: "Copy Old Key",
+    });
+    const rename = within(row).getByRole("button", {
+      name: "Rename Old Key",
+    });
+    const revoke = within(row).getByRole("button", {
+      name: "Revoke Old Key",
+    });
+
+    // Reveal/Copy disabled for revoked keys.
+    expect(reveal.getAttribute("aria-disabled")).toBe("true");
+    expect(copy.getAttribute("aria-disabled")).toBe("true");
+
+    // Reveal/Copy explain why.
+    expect(reveal.getAttribute("title")).toContain("revoked");
+    expect(copy.getAttribute("title")).toContain("revoked");
+
+    // Rename/Revoke remain functional.
+    expect(rename.getAttribute("aria-disabled")).toBeNull();
+    expect(revoke.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("opens the reveal modal in 'reveal' mode after a successful fetch", async () => {
+    const reveal = vi.fn().mockResolvedValue("waba_prod_SECRETVALUE123");
+    mockUseApiKeys(
+      [makeKey({ name: "Production", key_prefix: "waba_prod_" })],
+      { reveal },
+    );
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Production/ });
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Reveal Production" }),
+    );
+
+    // Hook reveal was called with the serial.
+    expect(reveal).toHaveBeenCalledWith("key_1");
+
+    // Modal opens with "Reveal Key" title and the fetched secret.
+    expect(screen.getByRole("dialog", { name: "Reveal Key" })).toBeTruthy();
+    expect(screen.getByText("waba_prod_SECRETVALUE123")).toBeTruthy();
+    expect(
+      screen.getByText("Copy this key and store it securely."),
+    ).toBeTruthy();
+  });
+
+  it("shows an error message when the reveal fetch fails", async () => {
+    const reveal = vi
+      .fn()
+      .mockRejectedValue(new Error("API key is revoked"));
+    mockUseApiKeys(
+      [makeKey({ name: "Production", status: "active" })],
+      { reveal },
+    );
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Production/ });
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Reveal Production" }),
+    );
+
+    // Modal should NOT open.
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Error message appears below the row actions.
+    const alerts = screen.getAllByRole("alert");
+    const error = alerts.find((el) =>
+      el.textContent?.includes("API key is revoked"),
+    );
+    expect(error).toBeTruthy();
+  });
+
+  it("copies the key to clipboard via the Copy button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const reveal = vi.fn().mockResolvedValue("waba_prod_SECRETVALUE123");
+    mockUseApiKeys(
+      [makeKey({ name: "Production", key_prefix: "waba_prod_" })],
+      { reveal },
+    );
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Production/ });
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Copy Production" }),
+    );
+
+    expect(reveal).toHaveBeenCalledWith("key_1");
+    expect(writeText).toHaveBeenCalledWith("waba_prod_SECRETVALUE123");
+
+    // Success feedback tooltip appears on the copy button.
+    const copyBtn = within(row).getByRole("button", {
+      name: "Copy Production",
+    });
+    expect(copyBtn.getAttribute("title")).toContain("Copied");
+  });
+
+  it("shows an error when the Copy fetch fails", async () => {
     const writeText = vi.fn();
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
       configurable: true,
     });
 
-    mockUseApiKeys([makeKey({ name: "Production", key_prefix: "waba_prod_" })]);
+    const reveal = vi
+      .fn()
+      .mockRejectedValue(new Error("Key not found"));
+    mockUseApiKeys(
+      [makeKey({ name: "Production", status: "active" })],
+      { reveal },
+    );
     render(<ApiKeysPage />);
 
     const row = screen.getByRole("row", { name: /Production/ });
-    const maskedCell = within(row).getByText(/^waba_prod_/);
-    const maskedText = maskedCell.textContent;
-
-    // Clicking Copy never touches the clipboard.
     await userEvent.click(
       within(row).getByRole("button", { name: "Copy Production" }),
     );
+
     expect(writeText).not.toHaveBeenCalled();
 
-    // Clicking Reveal never surfaces a plaintext secret — the cell stays masked.
+    // Copy button gets error feedback tooltip.
+    const copyBtn = within(row).getByRole("button", {
+      name: "Copy Production",
+    });
+    expect(copyBtn.getAttribute("title")).toContain("Failed to copy");
+  });
+
+  it("clears the plaintext secret from the DOM after the reveal modal closes", async () => {
+    const reveal = vi.fn().mockResolvedValue("waba_prod_TOPSECRET");
+    mockUseApiKeys(
+      [makeKey({ name: "Production", key_prefix: "waba_prod_" })],
+      { reveal },
+    );
+    render(<ApiKeysPage />);
+
+    const row = screen.getByRole("row", { name: /Production/ });
     await userEvent.click(
       within(row).getByRole("button", { name: "Reveal Production" }),
     );
-    expect(within(row).getByText(/^waba_prod_/).textContent).toBe(maskedText);
+
+    // Secret is visible in the modal.
+    expect(screen.getByText("waba_prod_TOPSECRET")).toBeTruthy();
+
+    // Close the modal.
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    // Secret is no longer in the DOM.
+    expect(screen.queryByText("waba_prod_TOPSECRET")).toBeNull();
+    // Modal is closed.
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

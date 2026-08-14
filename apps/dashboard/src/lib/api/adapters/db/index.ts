@@ -507,6 +507,7 @@ export class DrizzleTransport
         name: input.name,
         keyPrefix: input.keyPrefix,
         keyHash: input.keyHash,
+        keyCiphertext: input.keyCiphertext,
         scope: input.scope,
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
       })
@@ -616,12 +617,35 @@ export class DrizzleTransport
       );
   }
 
+  /**
+   * Count `api_keys` rows where the ciphertext was never persisted
+   * (`key_ciphertext IS NULL`) and the row was created after `since`. A non-zero
+   * result signals a misconfigured deploy where the encryption key was unset at
+   * create time. Used by the startup NULL-ciphertext alarm (wired into the
+   * composition root by another lane). Soft-deleted rows are excluded.
+   */
+  async countUnencryptedKeysSince(since: Date): Promise<number> {
+    const db = getDb();
+    const rows = await db
+      .select({ count: apiKeys.serial })
+      .from(apiKeys)
+      .where(
+        and(
+          isNull(apiKeys.keyCiphertext),
+          gt(apiKeys.createdAt, since),
+          isNull(apiKeys.deletedAt),
+        ),
+      );
+    return rows.length;
+  }
+
   private mapApiKey(row: typeof apiKeys.$inferSelect): ApiKey {
     return {
       serial: row.serial as unknown as string,
       name: row.name,
       keyPrefix: row.keyPrefix,
       keyHash: row.keyHash,
+      keyCiphertext: row.keyCiphertext as string | null,
       scope: row.scope,
       status: row.status,
       expiresAt: row.expiresAt ? String(row.expiresAt) : null,
