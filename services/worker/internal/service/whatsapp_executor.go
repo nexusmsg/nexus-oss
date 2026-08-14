@@ -22,6 +22,7 @@ type WhatsAppExecutor struct {
 	sessionStore ports.SessionStore
 	manager      ports.DeviceManager
 	jobsStore    ports.JobStore
+	recorder     ports.ActivityRecorder
 	logger       *log.Logger
 }
 
@@ -32,12 +33,14 @@ const whatsmeowQRCodeTTL = 5 * time.Minute
 
 // NewWhatsAppExecutor builds the executor. jobsStore is the jobs-table Store
 // used for result write-back; it may be nil (write-back is skipped) but
-// cmd/whatsapp_worker always provides it.
-func NewWhatsAppExecutor(provider ports.OutboundSenderProvider, sessionStore ports.SessionStore, manager ports.DeviceManager, jobsStore ports.JobStore, logger *log.Logger) *WhatsAppExecutor {
+// cmd/whatsapp_worker always provides it. recorder is the observability
+// activity recorder (ports.ActivityRecorder); it is stored for use by capture
+// points added in a later task and nil-safe until then.
+func NewWhatsAppExecutor(provider ports.OutboundSenderProvider, sessionStore ports.SessionStore, manager ports.DeviceManager, jobsStore ports.JobStore, recorder ports.ActivityRecorder, logger *log.Logger) *WhatsAppExecutor {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &WhatsAppExecutor{provider: provider, sessionStore: sessionStore, manager: manager, jobsStore: jobsStore, logger: logger}
+	return &WhatsAppExecutor{provider: provider, sessionStore: sessionStore, manager: manager, jobsStore: jobsStore, recorder: recorder, logger: logger}
 }
 
 func (e *WhatsAppExecutor) Handle(ctx context.Context, job entity.Job) (entity.JobResult, error) {

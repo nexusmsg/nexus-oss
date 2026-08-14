@@ -359,7 +359,7 @@ func newTestExecutor(provider ports.OutboundSenderProvider, session *entity.Sess
 	if jobsStore != nil {
 		jobStorePort = jobsStore
 	}
-	return NewWhatsAppExecutor(provider, store, manager, jobStorePort, nil), store, manager
+	return NewWhatsAppExecutor(provider, store, manager, jobStorePort, nil, nil), store, manager
 }
 
 // validTextPayload is a JSON payload that passes validateOutboundMessage.

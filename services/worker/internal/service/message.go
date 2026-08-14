@@ -29,16 +29,20 @@ type Message struct {
 	logger    *log.Logger
 	provider  ports.WebhookConfigProvider
 	forwarder ports.WebhookForwarder
+	recorder  ports.ActivityRecorder
 	sleep     sleepFunc
 }
 
 var _ ports.MessageService = (*Message)(nil)
 
-func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider, forwarder ports.WebhookForwarder) *Message {
+// NewMessage builds the inbound message service. recorder is the observability
+// activity recorder (ports.ActivityRecorder); it is stored for use by capture
+// points added in a later task and nil-safe until then.
+func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider, forwarder ports.WebhookForwarder, recorder ports.ActivityRecorder) *Message {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Message{logger: logger, provider: provider, forwarder: forwarder, sleep: defaultSleep}
+	return &Message{logger: logger, provider: provider, forwarder: forwarder, recorder: recorder, sleep: defaultSleep}
 }
 
 // WithSleep replaces the inter-retry sleeper (default: real clock). Tests

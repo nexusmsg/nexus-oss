@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/afikrim/waba-api-unofficial/internal/adapters/activity"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/apiconfig"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/queue"
 	"github.com/afikrim/waba-api-unofficial/internal/adapters/webhook"
@@ -62,7 +63,8 @@ func main() {
 	}
 
 	provider := apiconfig.NewClient(cfg.APIURL, cfg.InternalToken, cfg.WebhookConfigTTL, log.Default())
-	svc := service.NewMessage(log.Default(), provider, webhook.NewClient())
+	activityStore := activity.New(queueStore.Pool(), log.Default())
+	svc := service.NewMessage(log.Default(), provider, webhook.NewClient(), activityStore)
 
 	// The event-handler factory is composed here, in the root, so the
 	// whatsmeow adapter never constructs handlers-layer types itself.
@@ -89,7 +91,7 @@ func main() {
 		log.Printf("whatsmeow: connect stored devices: %v", err)
 	}
 
-	executor := service.NewWhatsAppExecutor(manager, sessionStore, manager, jobsStore, log.Default())
+	executor := service.NewWhatsAppExecutor(manager, sessionStore, manager, jobsStore, activityStore, log.Default())
 	consumer := channel.NewConsumer(queueStore, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
 
 	consumerErr := make(chan error, 1)

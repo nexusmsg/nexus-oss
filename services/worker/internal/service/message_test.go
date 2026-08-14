@@ -69,7 +69,7 @@ const payloadLogPrefix = "inbound WABA webhook payload: "
 
 func TestMessageInboundLogsWABAPayload(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{}, nil)
+	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{}, nil, nil)
 
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{
 		BusinessAccountID:  "business-123",
@@ -112,7 +112,7 @@ func TestMessageInboundLogsWABAPayload(t *testing.T) {
 
 func TestMessageInboundIgnoresSelfSentMessage(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{err: errors.New("must not be called")}, nil)
+	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{err: errors.New("must not be called")}, nil, nil)
 
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{IsFromMe: true})
 	if err != nil {
@@ -126,7 +126,7 @@ func TestMessageInboundIgnoresSelfSentMessage(t *testing.T) {
 func TestMessageInboundForwardsPayload(t *testing.T) {
 	cfg := entity.WebhookConfig{URL: "https://example.invalid/webhook", Secret: "s3cret"}
 	forwarder := &fakeWebhookForwarder{}
-	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: cfg}, forwarder)
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: cfg}, forwarder, nil)
 
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{
 		BusinessAccountID: "business-123",
@@ -158,7 +158,7 @@ func TestMessageInboundRetriesTransientForwardFailure(t *testing.T) {
 		},
 	}
 	sleeper := &recordingSleeper{}
-	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: entity.WebhookConfig{URL: "https://example.invalid/webhook"}}, forwarder).WithSleep(sleeper.Sleep)
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: entity.WebhookConfig{URL: "https://example.invalid/webhook"}}, forwarder, nil).WithSleep(sleeper.Sleep)
 
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{
 		Message: entity.MessageEvent{Type: entity.MessageEventTypeText, Text: "hello"},
@@ -187,7 +187,7 @@ func TestMessageInboundGivesUpAfterRetryBudget(t *testing.T) {
 		},
 	}
 	sleeper := &recordingSleeper{}
-	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: entity.WebhookConfig{URL: "https://example.invalid/webhook"}}, forwarder).WithSleep(sleeper.Sleep)
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: entity.WebhookConfig{URL: "https://example.invalid/webhook"}}, forwarder, nil).WithSleep(sleeper.Sleep)
 
 	start := time.Now()
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{
@@ -214,7 +214,7 @@ func TestMessageInboundGivesUpAfterRetryBudget(t *testing.T) {
 func TestMessageInboundRetryHonorsContextCancel(t *testing.T) {
 	forwarder := &fakeWebhookForwarder{errs: []error{errors.New("transient failure")}}
 	sleeper := &ctxBlockingSleeper{entered: make(chan struct{})}
-	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: entity.WebhookConfig{URL: "https://example.invalid/webhook"}}, forwarder).WithSleep(sleeper.Sleep)
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{config: entity.WebhookConfig{URL: "https://example.invalid/webhook"}}, forwarder, nil).WithSleep(sleeper.Sleep)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -245,14 +245,14 @@ func TestMessageInboundRetryHonorsContextCancel(t *testing.T) {
 }
 
 func TestMessageInboundRejectsNilEvent(t *testing.T) {
-	svc := NewMessage(log.Default(), nil, nil)
+	svc := NewMessage(log.Default(), nil, nil, nil)
 	if err := svc.Inbound(context.Background(), nil); err == nil {
 		t.Fatal("Inbound(nil) returned nil error")
 	}
 }
 
 func TestMessageInboundSurfacesProviderError(t *testing.T) {
-	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{err: errors.New("provider boom")}, nil)
+	svc := NewMessage(log.Default(), &fakeWebhookConfigProvider{err: errors.New("provider boom")}, nil, nil)
 
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{
 		PhoneNumberID: "phone-123",
@@ -265,7 +265,7 @@ func TestMessageInboundSurfacesProviderError(t *testing.T) {
 
 func TestMessageInboundSkipsForwardWhenNotConfigured(t *testing.T) {
 	var output bytes.Buffer
-	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{}, nil)
+	svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{}, nil, nil)
 
 	err := svc.Inbound(context.Background(), &entity.InboundEvent{
 		PhoneNumberID: "phone-123",
@@ -444,7 +444,7 @@ func TestMessageInboundLogsTypedPayloads(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var output bytes.Buffer
-			svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{}, nil)
+			svc := NewMessage(log.New(&output, "", 0), &fakeWebhookConfigProvider{}, nil, nil)
 			err := svc.Inbound(context.Background(), &entity.InboundEvent{Message: tt.event})
 			if err != nil {
 				t.Fatalf("Inbound() error = %v", err)
