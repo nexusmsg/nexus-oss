@@ -1,5 +1,7 @@
 package entity
 
+import "github.com/google/uuid"
+
 const (
 	MessageEventTypeUnknown     MessageEventType = "unsupported"
 	MessageEventTypeText        MessageEventType = "text"
@@ -128,4 +130,10 @@ type InboundEvent struct {
 	ProfileName        string
 	WhatsAppID         string
 	Message            MessageEvent
+	// ActivitySerial is the app-generated uuid of the whatsapp_event activity
+	// row recorded at the handler choke point (observability plan §10 R3). The
+	// service reads it to set source_activity_serial on the webhook-delivery
+	// rows it records, linking deliveries back to the inbound event. It is
+	// zero (uuid.Nil) when no recorder is wired.
+	ActivitySerial uuid.UUID
 }

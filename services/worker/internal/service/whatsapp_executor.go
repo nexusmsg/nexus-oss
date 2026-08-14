@@ -10,6 +10,7 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/google/uuid"
 )
 
 // WhatsAppExecutor implements ports.JobHandler for the stateful half of the
@@ -184,7 +185,84 @@ func (e *WhatsAppExecutor) handleSendMessage(ctx context.Context, job entity.Job
 
 	result, err := sender.Send(ctx, message)
 	if err != nil {
+		e.recordSendOutcome(ctx, job, message, "", fmt.Errorf("executor: send outbound message: %w", err))
 		return entity.JobResult{}, fmt.Errorf("executor: send outbound message: %w", err)
 	}
+	e.recordSendOutcome(ctx, job, message, result.ID, nil)
 	return entity.JobResult{WA_MESSAGE_ID: result.ID}, nil
+}
+
+// recordSendOutcome records a fire-and-forget activity row for a send
+// operation, carrying the job_serial (from source_job_serial) and the wamid
+// when the send succeeded (plan §4). The recorder type must stay within the
+// migration's CHECK-valid set ('api_request','whatsapp_event','webhook_delivery');
+// an outbound send IS a webhook-delivery event in the WABA sense (a message
+// delivery to WhatsApp), so it is recorded as a webhook_delivery row with its
+// own summary. A recorder failure is logged and swallowed — it never affects
+// the send result returned to the consumer.
+func (e *WhatsAppExecutor) recordSendOutcome(ctx context.Context, job entity.Job, message entity.OutboundMessage, wamid string, sendErr error) {
+	if e.recorder == nil {
+		return
+	}
+	status := entity.ActivityStatusOK
+	outcome := "sent"
+	if sendErr != nil {
+		status = entity.ActivityStatusError
+		outcome = sendErr.Error()
+	}
+	payload, err := json.Marshal(map[string]any{
+		"job_serial":   nullIfEmptyJobSerial(job.SourceJobSerial),
+		"wamid":        wamid,
+		"outcome":      outcome,
+		"to":           message.To,
+		"message_type": string(message.Type),
+	})
+	if err != nil {
+		e.logger.Printf("observability: marshal send outcome payload: %v", err)
+		return
+	}
+	var jobSerial *uuid.UUID
+	if js := parseJobSerial(job.SourceJobSerial); js != uuid.Nil {
+		v := js
+		jobSerial = &v
+	}
+	event := entity.ActivityEvent{
+		Serial:            uuid.New(),
+		Type:              entity.ActivityTypeWebhookDelivery,
+		Status:            status,
+		PhoneNumberID:     job.PhoneNumberID,
+		BusinessAccountID: "",
+		Summary:           fmt.Sprintf("send %s (job %s)", outcome, job.SourceJobSerial),
+		JobSerial:         jobSerial,
+		WAMessageID:       wamid,
+		ResourceType:      "job",
+		Payload:           payload,
+	}
+	go func() {
+		if err := e.recorder.Record(context.WithoutCancel(ctx), event); err != nil {
+			e.logger.Printf("observability: record send outcome %s: %v", event.Serial, err)
+		}
+	}()
+}
+
+// nullIfEmptyJobSerial returns nil for an empty job serial so the jsonb keeps
+// the key absent rather than an empty string.
+func nullIfEmptyJobSerial(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// parseJobSerial parses a job serial string to a uuid; returns uuid.Nil when it
+// is not a valid uuid (job serials are app-generated uuids).
+func parseJobSerial(s string) uuid.UUID {
+	if s == "" {
+		return uuid.Nil
+	}
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil
+	}
+	return u
 }

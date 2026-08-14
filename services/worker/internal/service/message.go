@@ -9,6 +9,7 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/google/uuid"
 )
 
 // sleepFunc applies a delay between forward retry attempts, returning ctx.Err()
@@ -104,7 +105,8 @@ func (s *Message) Inbound(ctx context.Context, event *entity.InboundEvent) error
 	if s.forwarder == nil {
 		return fmt.Errorf("webhook forwarder is nil")
 	}
-	if err := s.forwardWebhookWithRetry(ctx, s.forwarder, cfg, payload); err != nil {
+	sourceSerial := event.ActivitySerial
+	if err := s.forwardWebhookWithRetry(ctx, s.forwarder, cfg, payload, sourceSerial); err != nil {
 		return fmt.Errorf("forward inbound WABA webhook: %w", err)
 	}
 	return nil
@@ -118,13 +120,19 @@ var webhookForwardBackoffs = []time.Duration{200 * time.Millisecond, 400 * time.
 
 // forwardWebhookWithRetry forwards the payload through the injected
 // forwarder, retrying transient failures with bounded exponential backoff
-// applied through the injected sleeper (real clock in production).
-func (s *Message) forwardWebhookWithRetry(ctx context.Context, forwarder ports.WebhookForwarder, cfg entity.WebhookConfig, payload entity.WebhookPayload) error {
+// applied through the injected sleeper (real clock in production). It records
+// one activity row per delivery attempt and a terminal webhook_delivery row
+// (plan §3/§4). Recorder calls are fire-and-forget and never mutate lastErr or
+// any retry/backoff control flow (plan §10 R3): a recorder failure is logged
+// and swallowed, so it can never trigger a webhook retry.
+func (s *Message) forwardWebhookWithRetry(ctx context.Context, forwarder ports.WebhookForwarder, cfg entity.WebhookConfig, payload entity.WebhookPayload, sourceSerial uuid.UUID) error {
 	sleep := s.sleep
 	if sleep == nil {
 		sleep = defaultSleep
 	}
 	var lastErr error
+	attemptStatuses := make([]attemptStatus, 0, webhookForwardAttempts)
+	eventName := webhookEventName(payload)
 	for attempt := 0; attempt < webhookForwardAttempts; attempt++ {
 		if attempt > 0 {
 			if err := sleep(ctx, webhookForwardBackoffs[attempt-1]); err != nil {
@@ -132,11 +140,154 @@ func (s *Message) forwardWebhookWithRetry(ctx context.Context, forwarder ports.W
 			}
 		}
 		lastErr = forwarder.Forward(ctx, cfg, payload)
+		// Record a per-attempt row regardless of outcome; the attempt number is
+		// 1-based for readability. The capture calls below never touch lastErr
+		// or the retry control flow — outcome data goes only into the payload.
+		attemptStatuses = append(attemptStatuses, attemptStatus{
+			attempt:    attempt + 1,
+			err:        lastErr,
+			statusCode: 0, // the forwarder port returns only error, not status codes
+		})
+		s.recordDeliveryAttempt(ctx, cfg, payload, eventName, attempt+1, sourceSerial)
 		if lastErr == nil {
+			s.recordDeliveryTerminal(ctx, cfg, payload, eventName, attemptStatuses, entity.ActivityStatusOK, "delivered", sourceSerial)
 			return nil
 		}
 	}
+	// Exhausted the retry budget: terminal row is error, outcome is the last
+	// failure reason (stringified). lastErr is returned unchanged to the caller.
+	s.recordDeliveryTerminal(ctx, cfg, payload, eventName, attemptStatuses, entity.ActivityStatusError, errMessage(lastErr), sourceSerial)
 	return lastErr
+}
+
+// attemptStatus is the per-attempt detail captured for the terminal row's
+// attempt_statuses array (plan §3).
+type attemptStatus struct {
+	attempt    int
+	err        error
+	statusCode int
+}
+
+// recordDeliveryAttempt records one fire-and-forget webhook_delivery row with
+// status 'attempted' for a single forward attempt. It never touches the
+// forward path; a recorder error is logged and swallowed.
+func (s *Message) recordDeliveryAttempt(ctx context.Context, cfg entity.WebhookConfig, payload entity.WebhookPayload, event string, attempt int, sourceSerial uuid.UUID) {
+	if s.recorder == nil {
+		return
+	}
+	raw, err := json.Marshal(map[string]any{
+		"webhook_config_serial": nil, // not exposed by the provider; reserved for correlation
+		"url":                   cfg.URL,
+		"event":                 event,
+		"attempt":               attempt,
+	})
+	if err != nil {
+		s.logger.Printf("observability: marshal webhook attempt payload: %v", err)
+		return
+	}
+	eventRecord := entity.ActivityEvent{
+		Serial:               uuid.New(),
+		Type:                 entity.ActivityTypeWebhookDelivery,
+		Status:               entity.ActivityStatusAttempted,
+		PhoneNumberID:        phoneFromPayload(payload),
+		Summary:              fmt.Sprintf("webhook attempt %d → %s", attempt, cfg.URL),
+		SourceActivitySerial: nilIfNilUUID(sourceSerial),
+		Payload:              raw,
+	}
+	s.fireRecord(ctx, eventRecord)
+}
+
+// recordDeliveryTerminal records the single terminal webhook_delivery row
+// (status 'ok' or 'error') summarizing all attempts. It never affects the
+// forward path; a recorder error is logged and swallowed.
+func (s *Message) recordDeliveryTerminal(ctx context.Context, cfg entity.WebhookConfig, payload entity.WebhookPayload, event string, attempts []attemptStatus, status, finalOutcome string, sourceSerial uuid.UUID) {
+	if s.recorder == nil {
+		return
+	}
+	statuses := make([]map[string]any, 0, len(attempts))
+	for _, a := range attempts {
+		entry := map[string]any{"attempt": a.attempt}
+		if a.err != nil {
+			entry["error"] = a.err.Error()
+		}
+		if a.statusCode != 0 {
+			entry["status_code"] = a.statusCode
+		}
+		statuses = append(statuses, entry)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"webhook_config_serial": nil,
+		"url":                   cfg.URL,
+		"event":                 event,
+		"attempts":              len(attempts),
+		"attempt_statuses":      statuses,
+		"final_outcome":         finalOutcome,
+	})
+	if err != nil {
+		s.logger.Printf("observability: marshal webhook terminal payload: %v", err)
+		return
+	}
+	eventRecord := entity.ActivityEvent{
+		Serial:               uuid.New(),
+		Type:                 entity.ActivityTypeWebhookDelivery,
+		Status:               status,
+		PhoneNumberID:        phoneFromPayload(payload),
+		Summary:              fmt.Sprintf("webhook %s → %s", finalOutcome, cfg.URL),
+		SourceActivitySerial: nilIfNilUUID(sourceSerial),
+		Payload:              raw,
+	}
+	s.fireRecord(ctx, eventRecord)
+}
+
+// fireRecord records the event fire-and-forget in a goroutine detached from the
+// caller's cancellation (plan §10 R3), swallowing and logging any recorder
+// error so observability never affects the forward path.
+func (s *Message) fireRecord(ctx context.Context, event entity.ActivityEvent) {
+	if s.recorder == nil {
+		return
+	}
+	go func() {
+		if err := s.recorder.Record(context.WithoutCancel(ctx), event); err != nil {
+			s.logger.Printf("observability: record %s %s: %v", event.Type, event.Serial, err)
+		}
+	}()
+}
+
+// webhookEventName extracts the WABA event name from the payload (always
+// "messages" for inbound events today).
+func webhookEventName(payload entity.WebhookPayload) string {
+	if len(payload.Entry) > 0 && len(payload.Entry[0].Changes) > 0 {
+		return payload.Entry[0].Changes[0].Field
+	}
+	return ""
+}
+
+// phoneFromPayload returns the phone number id from the payload metadata, used
+// for the delivery rows' tenant key (null when absent).
+func phoneFromPayload(payload entity.WebhookPayload) string {
+	if len(payload.Entry) > 0 && len(payload.Entry[0].Changes) > 0 {
+		return payload.Entry[0].Changes[0].Value.Metadata.PhoneNumberID
+	}
+	return ""
+}
+
+// nilIfNilUUID returns nil for uuid.Nil, else a pointer to the value, so the
+// source_activity_serial column stays NULL (not zero-uuid) when linking is
+// absent.
+func nilIfNilUUID(u uuid.UUID) *uuid.UUID {
+	if u == uuid.Nil {
+		return nil
+	}
+	v := u
+	return &v
+}
+
+// errMessage returns the stringified error reason, or "unknown" when nil.
+func errMessage(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	return err.Error()
 }
 
 func mapMessage(message entity.MessageEvent) entity.Message {

@@ -69,7 +69,7 @@ func main() {
 	// The event-handler factory is composed here, in the root, so the
 	// whatsmeow adapter never constructs handlers-layer types itself.
 	handlerFactory := func(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, logger *log.Logger) func(ctx context.Context) func(evt any) {
-		return whatsapp.NewHandler(messageService, businessAccountID, phoneNumberID, displayPhone, logger).Handle
+		return whatsapp.NewHandler(messageService, businessAccountID, phoneNumberID, displayPhone, activityStore, logger).Handle
 	}
 
 	manager := whatsmeow.NewDeviceManager(container, svc, sessionStore, cfg.BusinessAccountID, handlerFactory, log.Default())

@@ -375,3 +375,37 @@ func validTextPayload() []byte {
 	}
 	return payload
 }
+
+// fakeActivityRecorder is an in-memory ports.ActivityRecorder for hermetic
+// observability-capture tests. It records every call (serial + event) so tests
+// can assert which activity rows were produced, and can be made to fail on
+// demand to verify recorder failure never breaks the forward path.
+type fakeActivityRecorder struct {
+	mu       sync.Mutex
+	events   []entity.ActivityEvent
+	failNext bool
+	failAll  bool
+}
+
+func (r *fakeActivityRecorder) Record(_ context.Context, event entity.ActivityEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failAll {
+		return errors.New("recorder boom")
+	}
+	if r.failNext {
+		r.failNext = false
+		return errors.New("recorder boom")
+	}
+	r.events = append(r.events, event)
+	return nil
+}
+
+// recorded returns a snapshot copy of all successfully recorded events.
+func (r *fakeActivityRecorder) recorded() []entity.ActivityEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]entity.ActivityEvent, len(r.events))
+	copy(out, r.events)
+	return out
+}

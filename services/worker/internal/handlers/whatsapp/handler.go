@@ -7,10 +7,13 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
+	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/afikrim/waba-api-unofficial/internal/handlers/whatsapp/dto"
+	"github.com/google/uuid"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -21,10 +24,14 @@ type Handler struct {
 	businessAccountID string
 	phoneNumberID     string
 	displayPhone      string
+	recorder          ports.ActivityRecorder
 	logger            *log.Logger
 }
 
-func NewHandler(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, logger *log.Logger) *Handler {
+// NewHandler builds the whatsmeow inbound-event handler. recorder is the
+// observability activity recorder (ports.ActivityRecorder); it is optional and
+// nil-guarded — when nil, no event row is recorded.
+func NewHandler(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, recorder ports.ActivityRecorder, logger *log.Logger) *Handler {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -33,8 +40,68 @@ func NewHandler(messageService ports.MessageService, businessAccountID, phoneNum
 		businessAccountID: businessAccountID,
 		phoneNumberID:     phoneNumberID,
 		displayPhone:      displayPhone,
+		recorder:          recorder,
 		logger:            logger,
 	}
+}
+
+// recordWhatsappEvent records a fire-and-forget activity row for the translated
+// inbound event, generating the serial app-side (so the caller can link
+// source_activity_serial without awaiting the write — plan §10 R3) and firing
+// the write in a goroutine detached from the request context (so a device
+// disconnect that cancels the incoming context cannot drop the write). A
+// recorder failure is swallowed and logged; it never affects the forward path.
+func (h *Handler) recordWhatsappEvent(ctx context.Context, event entity.InboundEvent) uuid.UUID {
+	serial := uuid.New()
+	if h.recorder == nil {
+		return serial
+	}
+	payload := buildWhatsappEventPayload(event)
+	record := entity.ActivityEvent{
+		Serial:            serial,
+		Type:              entity.ActivityTypeWhatsAppEvent,
+		Status:            entity.ActivityStatusOK,
+		PhoneNumberID:     event.PhoneNumberID,
+		BusinessAccountID: event.BusinessAccountID,
+		Summary:           summarizeWhatsappEvent(event),
+		WAMessageID:       event.Message.ID,
+		Payload:           payload,
+	}
+	// context.WithoutCancel detaches the write from ctx's cancellation (R3).
+	go func() {
+		if err := h.recorder.Record(context.WithoutCancel(ctx), record); err != nil {
+			h.logger.Printf("observability: record whatsapp_event %s: %v", serial, err)
+		}
+	}()
+	return serial
+}
+
+// buildWhatsappEventPayload returns the jsonb detail for a whatsapp_event row
+// (plan §3: compact summary of the WABA-visible fields).
+func buildWhatsappEventPayload(event entity.InboundEvent) json.RawMessage {
+	summary, _ := json.Marshal(map[string]any{
+		"message_id":         event.Message.ID,
+		"message_type":       string(event.Message.Type),
+		"from":               event.WhatsAppID,
+		"from_me":            event.IsFromMe,
+		"profile_name":       event.ProfileName,
+		"context_message_id": contextMessageID(event.Message),
+		"payload_summary":    summarizeWhatsappEvent(event),
+	})
+	return summary
+}
+
+// contextMessageID returns the quoted message id for a reply, if present.
+func contextMessageID(message entity.MessageEvent) string {
+	if message.Context != nil {
+		return message.Context.ID
+	}
+	return ""
+}
+
+// summarizeWhatsappEvent builds a short human line for the activity list.
+func summarizeWhatsappEvent(event entity.InboundEvent) string {
+	return string(event.Message.Type) + " from " + event.WhatsAppID
 }
 
 func (h *Handler) Handle(ctx context.Context) func(evt any) {
@@ -65,6 +132,7 @@ func (h *Handler) handleMessage(ctx context.Context, evt *events.Message) {
 	// number changes before unwrapping.
 	if newPhone, ok := dto.PhoneChangeNumber(evt); ok {
 		event := dto.ToPhoneChangeEvent(evt, newPhone, h.businessAccountID, h.phoneNumberID, h.displayPhone)
+		event.ActivitySerial = h.recordWhatsappEvent(ctx, event)
 		if err := h.messageService.Inbound(ctx, &event); err != nil {
 			h.logger.Printf("handle phone change: %v", err)
 		}
@@ -77,6 +145,7 @@ func (h *Handler) handleMessage(ctx context.Context, evt *events.Message) {
 	}
 
 	event := dto.ToInboundEvent(evt, h.businessAccountID, h.phoneNumberID, h.displayPhone)
+	event.ActivitySerial = h.recordWhatsappEvent(ctx, event)
 	if err := h.messageService.Inbound(ctx, &event); err != nil {
 		h.logger.Printf("handle inbound message: %v", err)
 	}
