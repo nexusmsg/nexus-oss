@@ -2,10 +2,12 @@
  * Route Handler: GET, DELETE /api/v1/sessions/[serial]
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
-import { withApiActivity } from "@/lib/api/observability-capture";
+import { authz } from "@/lib/api/authz";
+import { time } from "@/lib/api/time";
+import { obs } from "@/lib/api/observability-capture";
 import type { Session } from "@/lib/api/domain/session";
 
 export const runtime = "nodejs";
@@ -26,32 +28,38 @@ function toSessionJson(session: Session) {
   };
 }
 
-export const GET = withApiActivity({
-  requiredScope: "read",
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    const { sessionService } = composeServices(config);
-    const session = await sessionService.getSession(serial);
+export const GET = authz({ scope: "read" })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        const { sessionService } = composeServices(config);
+        const session = await sessionService.getSession(serial);
 
-    if (session === null) {
-      return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
-    }
+        if (session === null) {
+          return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
+        }
 
-    return NextResponse.json(toSessionJson(session));
-  },
-});
+        return NextResponse.json(toSessionJson(session));
+      },
+    ),
+  ),
+);
 
-export const DELETE = withApiActivity({
-  requiredScope: "write",
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    const { sessionService } = composeServices(config);
-    const deleted = await sessionService.deleteSession(serial);
-    if (!deleted) {
-      return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
-    }
-    return new NextResponse(null, { status: 204 });
-  },
-});
+export const DELETE = authz({ scope: "write" })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        const { sessionService } = composeServices(config);
+        const deleted = await sessionService.deleteSession(serial);
+        if (!deleted) {
+          return NextResponse.json({ error: { message: "Session not found", type: "OAuthException", code: 400 } }, { status: 404 });
+        }
+        return new NextResponse(null, { status: 204 });
+      },
+    ),
+  ),
+);

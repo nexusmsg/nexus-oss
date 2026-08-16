@@ -9,13 +9,15 @@
  * update/revoke responses are redacted (no secret, no SHA-256 hash).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
 import { ValidationError } from "@/lib/api/domain/errors";
 import type { ApiKeyScope } from "@/lib/api/domain/api-key";
 import type { RedactedApiKey } from "@/lib/api/service/api-key-management";
-import { withApiActivity } from "@/lib/api/observability-capture";
+import { authz } from "@/lib/api/authz";
+import { time } from "@/lib/api/time";
+import { obs } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -42,47 +44,51 @@ function toApiKeyJson(key: RedactedApiKey) {
   };
 }
 
-export const GET = withApiActivity({
-  requiredScope: "read",
-  bootstrapOnly: true,
-  handler: async (req) => {
-    const config = loadConfig();
-    const { apiKeys } = composeServices(config);
-    const keys = await apiKeys.listKeys();
-    return NextResponse.json({ api_keys: keys.map(toApiKeyJson) });
-  },
-});
+export const GET = authz({ scope: "read", bootstrapOnly: true })(
+  time()(
+    obs()(
+      async () => {
+        const config = loadConfig();
+        const { apiKeys } = composeServices(config);
+        const keys = await apiKeys.listKeys();
+        return NextResponse.json({ api_keys: keys.map(toApiKeyJson) });
+      },
+    ),
+  ),
+);
 
-export const POST = withApiActivity({
-  requiredScope: "write",
-  bootstrapOnly: true,
-  handler: async (req) => {
-    const config = loadConfig();
+export const POST = authz({ scope: "write", bootstrapOnly: true })(
+  time()(
+    obs()(
+      async (req) => {
+        const config = loadConfig();
 
-    let body: Record<string, unknown>;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
-    }
+        let body: Record<string, unknown>;
+        try {
+          body = await req.json();
+        } catch {
+          return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
+        }
 
-    try {
-      const scope = asScope(body.scope);
-      if (scope === undefined) {
-        throw new ValidationError("scope must be one of: read, write, full");
-      }
-      const { apiKeys } = composeServices(config);
-      const { key, secret } = await apiKeys.createKey({
-        name: asString(body.name) ?? "",
-        scope,
-        expiresAt: asString(body.expires_at) ?? undefined,
-      });
-      return NextResponse.json({ key: toApiKeyJson(key), secret }, { status: 201 });
-    } catch (err) {
-      if (err instanceof ValidationError) {
-        return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
-      }
-      throw err;
-    }
-  },
-});
+        try {
+          const scope = asScope(body.scope);
+          if (scope === undefined) {
+            throw new ValidationError("scope must be one of: read, write, full");
+          }
+          const { apiKeys } = composeServices(config);
+          const { key, secret } = await apiKeys.createKey({
+            name: asString(body.name) ?? "",
+            scope,
+            expiresAt: asString(body.expires_at) ?? undefined,
+          });
+          return NextResponse.json({ key: toApiKeyJson(key), secret }, { status: 201 });
+        } catch (err) {
+          if (err instanceof ValidationError) {
+            return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+          }
+          throw err;
+        }
+      },
+    ),
+  ),
+);

@@ -18,7 +18,7 @@
  * plaintext secret is NEVER logged.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
 import {
@@ -27,7 +27,9 @@ import {
   KeySecretDecryptionError,
   KeySecretNotRecoverableError,
 } from "@/lib/api/domain/errors";
-import { withApiActivity } from "@/lib/api/observability-capture";
+import { authz } from "@/lib/api/authz";
+import { time } from "@/lib/api/time";
+import { obs } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -66,60 +68,61 @@ function auditReveal(serial: string, outcome: string): void {
   );
 }
 
-export const GET = withApiActivity({
-  // The response body carries the plaintext API-key secret; never capture it
-  // (R7 — no tokens in the activity log). The request is still captured.
-  requiredScope: "write",
-  bootstrapOnly: true,
-  captureResponse: false,
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
+export const GET = authz({ scope: "write", bootstrapOnly: true })(
+  time()(
+    obs({ captureResponse: false })(
+      // The response body carries the plaintext API-key secret; never capture it
+      // (R7 — no tokens in the activity log). The request is still captured.
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
 
-    if (!allowReveal(serial)) {
-      return NextResponse.json(
-        { error: { message: "Too many requests", type: "OAuthException", code: 429 } },
-        { status: 429 },
-      );
-    }
+        if (!allowReveal(serial)) {
+          return NextResponse.json(
+            { error: { message: "Too many requests", type: "OAuthException", code: 429 } },
+            { status: 429 },
+          );
+        }
 
-    const { apiKeys } = composeServices(config);
+        const { apiKeys } = composeServices(config);
 
-    try {
-      const revealed = await apiKeys.revealKey(serial);
-      if (revealed === null) {
-        return NextResponse.json(
-          { error: { message: "API key not found", type: "OAuthException", code: 400 } },
-          { status: 404 },
-        );
-      }
-      auditReveal(serial, "revealed");
-      return NextResponse.json({ secret: revealed.secret });
-    } catch (error) {
-      if (error instanceof ApiKeyRevokedError) {
-        return NextResponse.json(
-          { error: { message: "API key is revoked", type: "OAuthException", code: 409 } },
-          { status: 409 },
-        );
-      }
-      if (error instanceof KeySecretNotRecoverableError) {
-        auditReveal(serial, "not_recoverable");
-        return NextResponse.json(
-          { error: { message: "secret is not recoverable for this key", type: "OAuthException", code: 410 } },
-          { status: 410 },
-        );
-      }
-      if (
-        error instanceof KeyEncryptionNotConfiguredError ||
-        error instanceof KeySecretDecryptionError
-      ) {
-        console.error("api_key reveal failed", { serial, error: error.message });
-        return NextResponse.json(
-          { error: { message: "Unable to reveal API key", type: "OAuthException", code: 500 } },
-          { status: 500 },
-        );
-      }
-      throw error;
-    }
-  },
-});
+        try {
+          const revealed = await apiKeys.revealKey(serial);
+          if (revealed === null) {
+            return NextResponse.json(
+              { error: { message: "API key not found", type: "OAuthException", code: 400 } },
+              { status: 404 },
+            );
+          }
+          auditReveal(serial, "revealed");
+          return NextResponse.json({ secret: revealed.secret });
+        } catch (error) {
+          if (error instanceof ApiKeyRevokedError) {
+            return NextResponse.json(
+              { error: { message: "API key is revoked", type: "OAuthException", code: 409 } },
+              { status: 409 },
+            );
+          }
+          if (error instanceof KeySecretNotRecoverableError) {
+            auditReveal(serial, "not_recoverable");
+            return NextResponse.json(
+              { error: { message: "secret is not recoverable for this key", type: "OAuthException", code: 410 } },
+              { status: 410 },
+            );
+          }
+          if (
+            error instanceof KeyEncryptionNotConfiguredError ||
+            error instanceof KeySecretDecryptionError
+          ) {
+            console.error("api_key reveal failed", { serial, error: error.message });
+            return NextResponse.json(
+              { error: { message: "Unable to reveal API key", type: "OAuthException", code: 500 } },
+              { status: 500 },
+            );
+          }
+          throw error;
+        }
+      },
+    ),
+  ),
+);

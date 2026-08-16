@@ -9,13 +9,15 @@
  * `revokeKey` (keys are revoked, never hard-deleted).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
 import { ValidationError } from "@/lib/api/domain/errors";
 import type { ApiKeyScope } from "@/lib/api/domain/api-key";
 import type { RedactedApiKey } from "@/lib/api/service/api-key-management";
-import { withApiActivity } from "@/lib/api/observability-capture";
+import { authz } from "@/lib/api/authz";
+import { time } from "@/lib/api/time";
+import { obs } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -42,72 +44,78 @@ function toApiKeyJson(key: RedactedApiKey) {
   };
 }
 
-export const GET = withApiActivity({
-  requiredScope: "read",
-  bootstrapOnly: true,
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    const { apiKeys } = composeServices(config);
-    const key = await apiKeys.getKey(serial);
+export const GET = authz({ scope: "read", bootstrapOnly: true })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        const { apiKeys } = composeServices(config);
+        const key = await apiKeys.getKey(serial);
 
-    if (key === null) {
-      return NextResponse.json({ error: { message: "API key not found", type: "OAuthException", code: 400 } }, { status: 404 });
-    }
+        if (key === null) {
+          return NextResponse.json({ error: { message: "API key not found", type: "OAuthException", code: 400 } }, { status: 404 });
+        }
 
-    return NextResponse.json(toApiKeyJson(key));
-  },
-});
+        return NextResponse.json(toApiKeyJson(key));
+      },
+    ),
+  ),
+);
 
-export const PATCH = withApiActivity({
-  requiredScope: "write",
-  bootstrapOnly: true,
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    let body: Record<string, unknown>;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
-    }
+export const PATCH = authz({ scope: "write", bootstrapOnly: true })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        let body: Record<string, unknown>;
+        try {
+          body = await req.json();
+        } catch {
+          return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
+        }
 
-    try {
-      const { apiKeys } = composeServices(config);
-      const key = await apiKeys.updateKey(serial, {
-        name: asString(body.name) ?? undefined,
-        scope: asScope(body.scope),
-        expiresAt:
-          body.expires_at === null ? null : asString(body.expires_at) ?? undefined,
-      });
+        try {
+          const { apiKeys } = composeServices(config);
+          const key = await apiKeys.updateKey(serial, {
+            name: asString(body.name) ?? undefined,
+            scope: asScope(body.scope),
+            expiresAt:
+              body.expires_at === null ? null : asString(body.expires_at) ?? undefined,
+          });
 
-      if (key === null) {
-        return NextResponse.json({ error: { message: "API key not found", type: "OAuthException", code: 400 } }, { status: 404 });
-      }
+          if (key === null) {
+            return NextResponse.json({ error: { message: "API key not found", type: "OAuthException", code: 400 } }, { status: 404 });
+          }
 
-      return NextResponse.json(toApiKeyJson(key));
-    } catch (err) {
-      if (err instanceof ValidationError) {
-        return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
-      }
-      throw err;
-    }
-  },
-});
+          return NextResponse.json(toApiKeyJson(key));
+        } catch (err) {
+          if (err instanceof ValidationError) {
+            return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+          }
+          throw err;
+        }
+      },
+    ),
+  ),
+);
 
-export const DELETE = withApiActivity({
-  requiredScope: "write",
-  bootstrapOnly: true,
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    const { apiKeys } = composeServices(config);
-    const key = await apiKeys.revokeKey(serial);
+export const DELETE = authz({ scope: "write", bootstrapOnly: true })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        const { apiKeys } = composeServices(config);
+        const key = await apiKeys.revokeKey(serial);
 
-    if (key === null) {
-      return NextResponse.json({ error: { message: "API key not found", type: "OAuthException", code: 400 } }, { status: 404 });
-    }
+        if (key === null) {
+          return NextResponse.json({ error: { message: "API key not found", type: "OAuthException", code: 400 } }, { status: 404 });
+        }
 
-    return NextResponse.json({ ok: true });
-  },
-});
+        return NextResponse.json({ ok: true });
+      },
+    ),
+  ),
+);

@@ -1,8 +1,8 @@
 /**
- * Tests for the API-request capture wrapper `withApiActivity` (plan §4, §10
- * R1/R4/R5/R7). These are route-level tests that wrap a handler the same way
- * the public routes do, with the composition root + config + observability
- * service mocked. They assert:
+ * Contract tests for the `obs` middleware feeding the full nested composition
+ * `authz(time(obs(handler)))` (replaces the recording-side of the old
+ * legacy capture suite). Composition and config are mocked like the old
+ * suite. It asserts:
  *
  *  1. A `bootstrap` identity records an `api_request` row with
  *     `request_serial: "bootstrap"`, the final status, a positive `duration_ms`,
@@ -15,13 +15,14 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { withApiActivity } from "@/lib/api/observability-capture";
+import { authz } from "@/lib/api/authz";
+import { time } from "@/lib/api/time";
+import { obs } from "@/lib/api/observability-capture";
 import type { ActivityContext } from "@/lib/api/domain/observability";
 import type {
   ActivityInsertRow,
   ActivityTransport,
 } from "@/lib/api/ports/activity-transport";
-import type { Config } from "@/lib/api/config";
 
 // --- Mocks ---------------------------------------------------------------
 
@@ -60,10 +61,12 @@ class FakeTransport implements ActivityTransport {
   }
 }
 
-const observabilityService = { record: (r: ActivityInsertRow) => new FakeTransport().insert(r) };
+const observabilityService = {
+  record: (r: ActivityInsertRow) => new FakeTransport().insert(r),
+};
 
 vi.mock("@/lib/api/compose", () => ({
-  composeServices: (config: Config) => ({
+  composeServices: () => ({
     observability: { record: (r: ActivityInsertRow) => observabilityService.record(r) },
     apiKeyAuth: {
       getKeyByHash: mocks.getKeyByHash,
@@ -89,29 +92,35 @@ function request(token: string, body?: unknown): NextRequest {
 }
 
 /**
- * Wraps a handler the way the public routes do. `opts.onHandler` receives the
- * activity context so a test can simulate a job-serial report.
+ * Wraps a handler the way the public routes do: outermost `authz`, then `time`,
+ * innermost `obs`. `onHandler` receives the activity context so a test can
+ * simulate a job-serial report.
  */
 function buildWrapped(
   onHandler: (ctx: ActivityContext) => Promise<Response>,
   opts: { requiredScope?: "read" | "write" } = {},
 ) {
-  return withApiActivity({
-    requiredScope: opts.requiredScope ?? "write",
-    handler: async (_req, ctx) => {
-      const res = await onHandler(ctx.activity);
-      // The handler returns a Response; wrap it back to NextResponse-like.
-      const body = await res.text();
-      const headers = new Headers();
-      res.headers.forEach((v, k) => headers.set(k, v));
-      return new Response(body, { status: res.status, headers }) as unknown as import("next/server").NextResponse;
-    },
-  });
+  return authz({ scope: opts.requiredScope ?? "write" })(
+    time()(
+      obs()(
+        async (_req, { activity }) => {
+          const res = await onHandler(activity);
+          const body = await res.text();
+          const headers = new Headers();
+          res.headers.forEach((v, k) => headers.set(k, v));
+          return new Response(body, {
+            status: res.status,
+            headers,
+          }) as unknown as import("next/server").NextResponse;
+        },
+      ),
+    ),
+  );
 }
 
 // --- Tests ---------------------------------------------------------------
 
-describe("withApiActivity — bootstrap identity capture", () => {
+describe("obs — bootstrap identity capture", () => {
   afterEach(() => {
     mocks.inserted.length = 0;
     mocks.setInsertShouldThrow(false);
@@ -169,23 +178,6 @@ describe("withApiActivity — bootstrap identity capture", () => {
     expect(mocks.inserted[0].jobSerial).toBe("job_abc123");
   });
 
-  it("does not record an activity row for an unauthorized (401) call", async () => {
-    const wrapped = buildWrapped(async () =>
-      new Response("{}", { status: 200 }),
-    );
-
-    const res = await wrapped(request(""), { params: {} as never });
-    expect(res.status).toBe(401);
-
-    await new Promise((r) => setTimeout(r, 0));
-
-    // Auth rejections are a security concern, not API activity to correlate.
-    // The rejection path must stay dependency-free: no service composition
-    // and no record, so unauthenticated calls never trigger composeServices
-    // (asserted by the route-auth contract suite).
-    expect(mocks.inserted).toHaveLength(0);
-  });
-
   it("captures full request and response bodies, redacting Authorization headers (R7)", async () => {
     const wrapped = buildWrapped(async (ctx) => {
       ctx.setJobSerial("job_redact");
@@ -213,7 +205,7 @@ describe("withApiActivity — bootstrap identity capture", () => {
   });
 });
 
-describe("withApiActivity — recorder failure does not break the request (R5)", () => {
+describe("obs — recorder failure does not break the request (R5)", () => {
   afterEach(() => {
     mocks.inserted.length = 0;
     mocks.setInsertShouldThrow(false);
@@ -235,20 +227,6 @@ describe("withApiActivity — recorder failure does not break the request (R5)",
     expect(await res.json()).toEqual({ created: true });
 
     // The record call is fire-and-forget; no row is captured, request unaffected.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.inserted).toHaveLength(0);
-  });
-
-  it("still returns 401 (and records it) when auth fails and the transport throws", async () => {
-    mocks.setInsertShouldThrow(true);
-
-    const wrapped = buildWrapped(async () =>
-      new Response("{}", { status: 200 }),
-    );
-
-    const res = await wrapped(request(""), { params: {} as never });
-    expect(res.status).toBe(401);
-
     await new Promise((r) => setTimeout(r, 0));
     expect(mocks.inserted).toHaveLength(0);
   });

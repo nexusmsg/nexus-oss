@@ -2,12 +2,14 @@
  * Route Handler: GET /api/v1/webhooks/[serial], PATCH /api/v1/webhooks/[serial], DELETE /api/v1/webhooks/[serial]
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { composeServices } from "@/lib/api/compose";
 import { loadConfig } from "@/lib/api/config";
+import { authz } from "@/lib/api/authz";
+import { time } from "@/lib/api/time";
+import { obs } from "@/lib/api/observability-capture";
 import { ValidationError } from "@/lib/api/domain/errors";
 import type { WebhookConfig } from "@/lib/api/domain/webhook-config";
-import { withApiActivity } from "@/lib/api/observability-capture";
 
 export const runtime = "nodejs";
 
@@ -38,71 +40,80 @@ function toWebhookConfigJson(cfg: WebhookConfig) {
   };
 }
 
-export const GET = withApiActivity({
-  requiredScope: "read",
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    const { webhookManagement } = composeServices(config);
-    const cfg = await webhookManagement.getConfig(serial);
+export const GET = authz({ scope: "read" })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        const { webhookManagement } = composeServices(config);
+        const cfg = await webhookManagement.getConfig(serial);
 
-    if (cfg === null) {
-      return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
-    }
+        if (cfg === null) {
+          return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
+        }
 
-    return NextResponse.json(toWebhookConfigJson(cfg));
-  },
-});
+        return NextResponse.json(toWebhookConfigJson(cfg));
+      },
+    ),
+  ),
+);
 
-export const PATCH = withApiActivity({
-  requiredScope: "write",
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    let body: Record<string, unknown>;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
-    }
+export const PATCH = authz({ scope: "write" })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        let body: Record<string, unknown>;
+        try {
+          body = await req.json();
+        } catch {
+          return NextResponse.json({ error: { message: "Invalid request body", type: "OAuthException", code: 400 } }, { status: 400 });
+        }
 
-    try {
-      const { webhookManagement } = composeServices(config);
-      const cfg = await webhookManagement.updateConfig(serial, {
-        webhookUrl: asString(body.webhook_url) ?? undefined,
-        webhookSecret: asString(body.webhook_secret) ?? undefined,
-        enabled: asBoolean(body.enabled),
-        maxRetries: asNumber(body.max_retries),
-        retryDelayMs: asNumber(body.retry_delay_ms),
-        timeoutMs: asNumber(body.timeout_ms),
-      });
+        try {
+          const { webhookManagement } = composeServices(config);
+          const cfg = await webhookManagement.updateConfig(serial, {
+            webhookUrl: asString(body.webhook_url) ?? undefined,
+            webhookSecret: asString(body.webhook_secret) ?? undefined,
+            enabled: asBoolean(body.enabled),
+            maxRetries: asNumber(body.max_retries),
+            retryDelayMs: asNumber(body.retry_delay_ms),
+            timeoutMs: asNumber(body.timeout_ms),
+          });
 
-      if (cfg === null) {
-        return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
-      }
+          if (cfg === null) {
+            return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
+          }
 
-      return NextResponse.json(toWebhookConfigJson(cfg));
-    } catch (err) {
-      if (err instanceof ValidationError) {
-        return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
-      }
-      throw err;
-    }
-  },
-});
+          return NextResponse.json(toWebhookConfigJson(cfg));
+        } catch (err) {
+          if (err instanceof ValidationError) {
+            return NextResponse.json({ error: { message: err.message, type: "OAuthException", code: 400 } }, { status: 400 });
+          }
+          throw err;
+        }
+      },
+    ),
+  ),
+);
 
-export const DELETE = withApiActivity({
-  requiredScope: "write",
-  handler: async (req, { params }) => {
-    const config = loadConfig();
-    const { serial } = await params;
-    const { webhookManagement } = composeServices(config);
-    const cfg = await webhookManagement.deleteConfig(serial);
+export const DELETE = authz({ scope: "write" })(
+  time()(
+    obs()(
+      async (req, { params }) => {
+        const config = loadConfig();
+        const { serial } = await params;
+        const { webhookManagement } = composeServices(config);
+        const cfg = await webhookManagement.deleteConfig(serial);
 
-    if (cfg === null) {
-      return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
-    }
+        if (cfg === null) {
+          return NextResponse.json({ error: { message: "Webhook config not found", type: "OAuthException", code: 400 } }, { status: 404 });
+        }
 
-    return NextResponse.json({ ok: true });
-  },
-});
+        return NextResponse.json({ ok: true });
+      },
+    ),
+  ),
+);

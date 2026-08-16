@@ -24,3 +24,31 @@
 - User-visible interfaces are owned by the @designer workflow; headless/state
   logic by @fixer. See root `AGENTS.md`.
 - Icons: Do NOT add lucide-react. Hand-ported SVG set at `src/components/icons/index.tsx`.
+
+### Route Handler Pattern
+
+All public `/api/v1/*` and `/api/waba/*` routes are composed as nested
+higher-order functions:
+
+```ts
+export const GET = authz({ scope: "read" })(
+  time()(
+    obs()(
+      async (req, { params, activity }) => { /* handler body */ },
+    ),
+  ),
+);
+```
+
+- `authz` (`src/lib/api/authz.ts`) is always the outermost layer: it builds the
+  route context, authorizes, and returns the 401 envelope without calling any
+  inner layer or composing services. Management routes pass `bootstrapOnly: true`.
+- `time` (`src/lib/api/time.ts`) exposes `ctx.timing` for the recorded `duration_ms`.
+- `obs` (`src/lib/api/observability-capture`) records one `api_request` activity
+  row fire-and-forget; handlers report an enqueued job serial via
+  `activity.setJobSerial(...)`. Use `captureResponse: false` on routes that
+  return secrets (e.g. API-key reveal) and `resolvePath` to report a logical path.
+- Error envelopes come from `src/lib/api/envelopes.ts`; do not inline auth,
+  envelope, or activity logic in a route.
+- Ordering guarantee: `authz` must wrap `obs` (not the reverse) or the
+  unauthorized-request-records-nothing contract breaks.
