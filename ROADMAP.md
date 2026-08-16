@@ -52,7 +52,7 @@ is removed).
 - [ ] REST API polish (partial — WABA envelopes + auth done; audit ongoing)
 - [ ] SDK
 - [ ] CLI (partial — worker migrate CLI only)
-- [ ] Documentation (partial — `docs/services/api/**` stale, describes removed Hono API)
+- [ ] Documentation (partial — docs graph current for worker + dashboard; OpenAPI-driven rewrite pending)
 - [ ] Examples
 
 ## Status detail
@@ -112,7 +112,7 @@ is removed).
 | REST API polish | 🟡 | WABA-compatible error envelopes (`OAuthException`), constant-time auth, consistent status codes; surface audit + hardening ongoing |
 | SDK | ❌ | No client SDK |
 | CLI | 🟡 | Worker has a migrate CLI only; no API/control CLI |
-| Documentation | 🟡 | Docs graph exists (`docs/README.md`); `docs/services/api/**` is stale (describes the removed Hono API) and needs rewriting against the dashboard API |
+| Documentation | 🟡 | Docs graph is current for the worker + dashboard (`docs/README.md`); the archived `services/api` docs are removed. The OpenAPI spec (see above) is the path to full endpoint accuracy |
 | Examples | ❌ | No runnable example integrations |
 
 ## Suggested order of attack

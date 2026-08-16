@@ -65,8 +65,8 @@ with domain/ports/services/adapters and a `compose.ts` composition root).
   keys can never list, create, rename, or revoke other keys. The plaintext
   secret is returned exactly once at creation.
 - **`/internal/*`** routes accept only `INTERNAL_TOKEN` (strictly isolated).
-- See [`docs/services/api/`](../services/api/) for the endpoint and
-  architecture documentation. The worker has no API-key changes.
+- API usage examples and configuration live in the repo
+  [`README.md`](../../README.md); the worker has no API-key changes.
 
 #### Current Status
 

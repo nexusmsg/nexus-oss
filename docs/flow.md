@@ -1,163 +1,157 @@
+# Runtime Flows
+
+Mermaid diagrams for the current runtime flows. Architecture reference:
+[docs/architecture/README.md](architecture/README.md).
+
 ## 1. Session Creation
 
 ```mermaid
 flowchart LR
 
-A[User] --> B[Create Session]
-B --> C{Number Used?}
-
-C -- Yes --> B
-C -- No --> D[Insert into Sessions Table]
+A[POST /api/v1/sessions] --> B{phone_number_id exists?}
+B -- Yes --> C[Return existing session]
+B -- No --> D[Insert into sessions table]
+D --> E[Return session with serial]
 ```
 
----
+Session create is idempotent per `phone_number_id`.
 
 ## 2. Pairing Session
 
 ```mermaid
 flowchart TB
 
-subgraph API
-    A[User]
-    B[Select Session]
-    C[Request Pairing]
-    D[Create New Pairing Job]
-    E[Check if QR Code Payload Received]
-    F{Received?}
-    G[Show QR to User]
-    H[User Scan QR]
-    I[Session Stored in Database]
-
-    A --> B --> C --> D --> E --> F
+subgraph Dashboard API
+    A[User] --> B[Select Session]
+    B --> C[POST pairing - enqueue pairing job]
+    C --> E[GET pairing/qr - poll for QR]
+    E --> F{QR received?}
     F -- No --> E
-    F -- Yes --> G --> H --> I
+    F -- Yes --> G[Show QR to User]
+    G --> H[User scans QR]
 end
 
 subgraph Worker
-    W1[Claim Pending Job]
-    W2[Request Connect WhatsApp]
-    W3[Send Callback with QR Content]
+    W1[whatsapp_worker claims pairing job]
+    W2[DeviceManager connects device]
+    W3[QR stored in session_qr_codes]
+    W4[Session stored in sessions table]
 
-    W1 --> W2 --> W3
+    W1 --> W2 --> W3 --> W4
 end
 
-D -. enqueue .-> W1
-W3 -. callback .-> E
+C -. enqueue .-> W1
+W3 -. qr_job_serial .-> E
 ```
 
----
+The QR payload is persisted in `session_qr_codes`; the dashboard polls
+`GET /api/v1/sessions/<serial>/pairing/qr` until it appears, then shows it.
 
 ## 3. Logout Session
 
 ```mermaid
 flowchart TB
 
-subgraph API
-    A[User]
-    B[Select Session]
-    C[Request Logout]
-    D[Create Logout Job]
-    E[Check if Logout Completed]
-    F{Completed?}
-    G[Mark Session Logged Out]
-
-    A --> B --> C --> D --> E --> F
+subgraph Dashboard API
+    A[User] --> B[Select Session]
+    B --> C[POST logout - enqueue logout job]
+    C --> E[Poll session status]
+    E --> F{Logged out?}
     F -- No --> E
-    F -- Yes --> G
+    F -- Yes --> G[Mark session logged out]
 end
 
 subgraph Worker
-    W1[Claim Pending Job]
-    W2[Request Logout WhatsApp]
-    W3[Cleanup Session]
-    W4[Send Callback to API]
+    W1[whatsapp_worker claims logout job]
+    W2[Disconnect WhatsApp]
+    W3[Remove stored session]
 
-    W1 --> W2 --> W3 --> W4
+    W1 --> W2 --> W3
 end
 
-D -. enqueue .-> W1
-W4 -. callback .-> E
+C -. enqueue .-> W1
+W3 -. status .-> E
 ```
-
----
 
 ## 4. Heartbeat
 
 ```mermaid
 flowchart LR
 
-A[Worker]
---> B[Every 10 Seconds]
---> C[Send Heartbeat to API]
+A[whatsapp_worker]
+--> B[Every HEARTBEAT_INTERVAL]
+--> C[POST /internal/v1/heartbeat]
+--> D[Dashboard batch-updates sessions.last_seen_at]
 ```
-
----
 
 ## 5. Send Message
 
 ```mermaid
 flowchart TB
 
-subgraph API
-    A[User]
-    B[Request Send Message]
-    C[Create Send Message Job]
-    D[Check if Message Has Been Sent]
-    E{Sent?}
-    F[Send FCM Notification]
+subgraph Dashboard API
+    A[Request send message]
+    B[Insert jobs row]
+    C[Poll jobs for terminal status]
 
-    A --> B --> C --> D --> E
-    E -- No --> D
-    E -- Yes --> F
+    A --> B --> C
 end
 
-subgraph Worker
-    W1[Claim Pending Job]
-    W2[Send Message]
-    W3[Callback to API]
+subgraph cmd/worker dispatcher
+    D1[Claims jobs row - SKIP LOCKED]
+    D2[Validates payload]
+    D3[Inserts whatsmeow_jobs row - source_job_serial]
+    D4[Returns ErrDispatched - jobs stays claimed]
 
-    W1 --> W2 --> W3
+    D1 --> D2 --> D3 --> D4
 end
 
-C -. enqueue .-> W1
-W3 -. callback .-> D
+subgraph cmd/whatsapp_worker executor
+    E1[Claims whatsmeow_jobs row]
+    E2[ensureDevice - lazy connect]
+    E3[SendMessage - real wamid]
+    E4[Writes terminal status + result to jobs]
+
+    E1 --> E2 --> E3 --> E4
+end
+
+B -. insert .-> D1
+D3 -. whatsmeow_jobs .-> E1
+E4 -. result.wa_message_id .-> C
+C --> F[Return WABA 200 envelope with wamid]
 ```
 
----
+> The engine path above is wired end-to-end (queue → dispatcher → executor →
+> write-back), but the **public send route is not exposed yet** — it was in the
+> archived Hono API and is pending in the dashboard (ROADMAP Phase 3).
 
-## 6. Incoming WhatsApp Message
+## 6. Incoming (WhatsApp -> Customer Webhook)
 
 ```mermaid
-flowchart LR
+flowchart TB
 
-A[WhatsApp]
---> B[Worker Receive New Message]
---> C[Call API to Retrieve Webhook Config]
-
-C --> D[Send Webhook]
-
-C --> E[Send Callback to API]
-
-E --> F[API Receive Callback of Inbound Message]
---> G[Send FCM Token]
+A[WhatsApp event]
+--> B[whatsapp_worker handler]
+--> C[Build WABA-shaped payload - service layer]
+--> D[GET /internal/v1/webhook-config - dashboard]
+--> E[Forward to customer webhook - HMAC signature]
+--> F{Customer ack?}
+F -- No --> G[Retry with backoff, then drop]
+F -- Yes --> H[Done]
 ```
-
----
 
 ## 7. Generic Job Retry
 
 ```mermaid
 flowchart LR
 
-A[Worker Claim Pending Job]
---> B[Start Retry Config]
---> C[Execute]
---> D{Success?}
-
-D -- Yes --> E[Update Job Status]
-
-D -- No --> F{Retryable?}
-
-F -- Yes --> B
-F -- No --> E
+A[Claim job - SKIP LOCKED]
+--> B[Execute]
+--> C{Outcome?}
+C -- Success --> D[Complete with result]
+C -- Retryable --> E[Backoff + increment attempts]
+E --> F{attempts < MAX_ATTEMPTS?}
+F -- Yes --> A
+F -- No --> G[Fail permanently]
+C -- Terminal error --> G
 ```

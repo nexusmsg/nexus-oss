@@ -8,11 +8,10 @@ specific section, and so on.
 docs/
   README.md            <- you are here (root index)
   architecture/        <- cross-cutting runtime flows & plans
-  services/            <- per-service documentation
-    api/               <- Hono API (Node.js)
-    worker/            <- WhatsMeow gateway (Go; two binaries sharing whatsmeow_jobs)
+  services/            <- per-service documentation (worker; the HTTP API
+                          lives in apps/dashboard)
   shared/              <- shared assets (db migrations)
-  apps/                <- UI & frontend (Nexus dashboard)
+  apps/                <- UI & frontend (Nexus dashboard, hosts the API)
 ```
 
 ## Repository at a glance
@@ -23,16 +22,15 @@ account.
 
 | Component | Path | Stack | Docs |
 |-----------|------|-------|------|
-| API | `services/api/` | Node.js, Hono, PostgreSQL | [services/api](services/api/) |
+| Dashboard (API + UI) | `apps/dashboard/` | Next.js 16, React 19, Drizzle/pg | [apps](apps/) |
 | Worker | `services/worker/` | Go, WhatsMeow, pgx | [services/worker](services/worker/) |
-| DB migrations | `shared/db/migrations/` | SQL, golang-migrate | [services/../shared](shared/) |
-| Frontend | `apps/dashboard/` | React, Vite, TS | [apps](apps/) |
+| DB migrations | `shared/db/migrations/` | SQL, golang-migrate | [shared](shared/) |
 | Architecture & flows | `docs/architecture/`, `docs/flow.md` | mermaid flows | [architecture](architecture/) |
 
 ## How to navigate
 
 1. **Start here** — decide which component your question is about.
-2. Open that component's index (`services/api/README.md`, `services/worker/README.md`).
+2. Open that component's index (`apps/README.md`, `services/worker/README.md`).
 3. Follow the section links (architecture, endpoints, configuration, testing…).
 
 ## Working agreements

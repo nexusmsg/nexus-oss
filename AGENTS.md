@@ -15,11 +15,10 @@
 
 This repository is a Turborepo monorepo with three component areas:
 
-- `apps/` — UI & frontend (placeholder for now; `.gitkeep` only).
-- `services/api/` — Node.js Hono API: WABA-compatible HTTP surface, job
-  enqueue, synchronous result wait, internal webhook-config API.
+- `apps/dashboard/` — Next.js 16 app hosting the WABA-compatible HTTP API
+  (`/api/v1/*`, `/api/internal/*`, Drizzle/pg) plus the management UI.
 - `services/worker/` — Go + WhatsMeow message gateway: WhatsMeow events → WABA
-  webhook payloads, outbound send execution, Supabase queue consumer.
+  webhook payloads, outbound send execution, queue consumer (two binaries).
 - `shared/db/migrations/` — SQL migrations in golang-migrate format (M2).
 
 ## Commands
@@ -64,13 +63,11 @@ ordinary hygiene, and choose test levels per the test skills.
 Each component area has its own nested rules file — check it before touching
 that area:
 
-- `services/api/AGENTS.md` — Hono API: hexagonal layout, route/auth
-  conventions, `npm test` + integration gating.
+- `apps/AGENTS.md` — dashboard: Next.js conventions, API/UI layout, design
+  system ownership.
 - `services/worker/AGENTS.md` — Go worker (see above).
 - `shared/AGENTS.md` — DB migrations: file conventions, idempotency, Docker
   rebuild requirement, doc sync.
-- `apps/AGENTS.md` — frontend area (placeholder; conventions to be filled in
-  once code lands).
 
 ## Plans and Docs
 
