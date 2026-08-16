@@ -9,6 +9,7 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/afikrim/waba-api-unofficial/internal/observability"
 	"github.com/google/uuid"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
@@ -33,7 +34,7 @@ func (s *capturingMessageService) Inbound(_ context.Context, event *entity.Inbou
 func TestHandlerRecordsEventRowAndSharesSerial(t *testing.T) {
 	recorder := &fakeActivityRecorder{}
 	svc := &capturingMessageService{}
-	handler := NewHandler(svc, "business-1", "phone-1", "+628123456789", recorder, nil)
+	handler := NewHandler(svc, "business-1", "phone-1", "+628123456789", observability.NewEmitter(recorder, nil), nil)
 
 	// A minimal *events.Message; ToInboundEvent only needs Info fields for a
 	// text message translation. We pass a stub and rely on dto filling defaults.

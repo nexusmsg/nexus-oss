@@ -9,6 +9,7 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/afikrim/waba-api-unofficial/internal/observability"
 	"github.com/google/uuid"
 )
 
@@ -30,20 +31,20 @@ type Message struct {
 	logger    *log.Logger
 	provider  ports.WebhookConfigProvider
 	forwarder ports.WebhookForwarder
-	recorder  ports.ActivityRecorder
+	emitter   *observability.Emitter
 	sleep     sleepFunc
 }
 
 var _ ports.MessageService = (*Message)(nil)
 
-// NewMessage builds the inbound message service. recorder is the observability
-// activity recorder (ports.ActivityRecorder); it is stored for use by capture
-// points added in a later task and nil-safe until then.
-func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider, forwarder ports.WebhookForwarder, recorder ports.ActivityRecorder) *Message {
+// NewMessage builds the inbound message service. emitter is the shared
+// fire-and-forget activity emitter; it is optional and nil-safe (a nil emitter
+// degrades to a no-op).
+func NewMessage(logger *log.Logger, provider ports.WebhookConfigProvider, forwarder ports.WebhookForwarder, emitter *observability.Emitter) *Message {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Message{logger: logger, provider: provider, forwarder: forwarder, recorder: recorder, sleep: defaultSleep}
+	return &Message{logger: logger, provider: provider, forwarder: forwarder, emitter: emitter, sleep: defaultSleep}
 }
 
 // WithSleep replaces the inter-retry sleeper (default: real clock). Tests
@@ -172,9 +173,6 @@ type attemptStatus struct {
 // status 'attempted' for a single forward attempt. It never touches the
 // forward path; a recorder error is logged and swallowed.
 func (s *Message) recordDeliveryAttempt(ctx context.Context, cfg entity.WebhookConfig, payload entity.WebhookPayload, event string, attempt int, sourceSerial uuid.UUID) {
-	if s.recorder == nil {
-		return
-	}
 	raw, err := json.Marshal(map[string]any{
 		"webhook_config_serial": nil, // not exposed by the provider; reserved for correlation
 		"url":                   cfg.URL,
@@ -194,16 +192,13 @@ func (s *Message) recordDeliveryAttempt(ctx context.Context, cfg entity.WebhookC
 		SourceActivitySerial: nilIfNilUUID(sourceSerial),
 		Payload:              raw,
 	}
-	s.fireRecord(ctx, eventRecord)
+	s.emitter.Emit(ctx, eventRecord)
 }
 
 // recordDeliveryTerminal records the single terminal webhook_delivery row
 // (status 'ok' or 'error') summarizing all attempts. It never affects the
 // forward path; a recorder error is logged and swallowed.
 func (s *Message) recordDeliveryTerminal(ctx context.Context, cfg entity.WebhookConfig, payload entity.WebhookPayload, event string, attempts []attemptStatus, status, finalOutcome string, sourceSerial uuid.UUID) {
-	if s.recorder == nil {
-		return
-	}
 	statuses := make([]map[string]any, 0, len(attempts))
 	for _, a := range attempts {
 		entry := map[string]any{"attempt": a.attempt}
@@ -236,21 +231,7 @@ func (s *Message) recordDeliveryTerminal(ctx context.Context, cfg entity.Webhook
 		SourceActivitySerial: nilIfNilUUID(sourceSerial),
 		Payload:              raw,
 	}
-	s.fireRecord(ctx, eventRecord)
-}
-
-// fireRecord records the event fire-and-forget in a goroutine detached from the
-// caller's cancellation (plan §10 R3), swallowing and logging any recorder
-// error so observability never affects the forward path.
-func (s *Message) fireRecord(ctx context.Context, event entity.ActivityEvent) {
-	if s.recorder == nil {
-		return
-	}
-	go func() {
-		if err := s.recorder.Record(context.WithoutCancel(ctx), event); err != nil {
-			s.logger.Printf("observability: record %s %s: %v", event.Type, event.Serial, err)
-		}
-	}()
+	s.emitter.Emit(ctx, eventRecord)
 }
 
 // webhookEventName extracts the WABA event name from the payload (always

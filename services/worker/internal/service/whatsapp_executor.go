@@ -10,6 +10,7 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/afikrim/waba-api-unofficial/internal/observability"
 	"github.com/google/uuid"
 )
 
@@ -23,7 +24,7 @@ type WhatsAppExecutor struct {
 	sessionStore ports.SessionStore
 	manager      ports.DeviceManager
 	jobsStore    ports.JobStore
-	recorder     ports.ActivityRecorder
+	emitter      *observability.Emitter
 	logger       *log.Logger
 }
 
@@ -34,14 +35,14 @@ const whatsmeowQRCodeTTL = 5 * time.Minute
 
 // NewWhatsAppExecutor builds the executor. jobsStore is the jobs-table Store
 // used for result write-back; it may be nil (write-back is skipped) but
-// cmd/whatsapp_worker always provides it. recorder is the observability
-// activity recorder (ports.ActivityRecorder); it is stored for use by capture
-// points added in a later task and nil-safe until then.
-func NewWhatsAppExecutor(provider ports.OutboundSenderProvider, sessionStore ports.SessionStore, manager ports.DeviceManager, jobsStore ports.JobStore, recorder ports.ActivityRecorder, logger *log.Logger) *WhatsAppExecutor {
+// cmd/whatsapp_worker always provides it. emitter is the shared fire-and-forget
+// activity emitter; it is optional and nil-safe (a nil emitter degrades to a
+// no-op).
+func NewWhatsAppExecutor(provider ports.OutboundSenderProvider, sessionStore ports.SessionStore, manager ports.DeviceManager, jobsStore ports.JobStore, emitter *observability.Emitter, logger *log.Logger) *WhatsAppExecutor {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &WhatsAppExecutor{provider: provider, sessionStore: sessionStore, manager: manager, jobsStore: jobsStore, recorder: recorder, logger: logger}
+	return &WhatsAppExecutor{provider: provider, sessionStore: sessionStore, manager: manager, jobsStore: jobsStore, emitter: emitter, logger: logger}
 }
 
 func (e *WhatsAppExecutor) Handle(ctx context.Context, job entity.Job) (entity.JobResult, error) {
@@ -194,16 +195,14 @@ func (e *WhatsAppExecutor) handleSendMessage(ctx context.Context, job entity.Job
 
 // recordSendOutcome records a fire-and-forget activity row for a send
 // operation, carrying the job_serial (from source_job_serial) and the wamid
-// when the send succeeded (plan §4). The recorder type must stay within the
-// migration's CHECK-valid set ('api_request','whatsapp_event','webhook_delivery');
-// an outbound send IS a webhook-delivery event in the WABA sense (a message
+// when the send succeeded (plan §4). The type must stay within the migration's
+// CHECK-valid set ('api_request','whatsapp_event','webhook_delivery'); an
+// outbound send IS a webhook-delivery event in the WABA sense (a message
 // delivery to WhatsApp), so it is recorded as a webhook_delivery row with its
-// own summary. A recorder failure is logged and swallowed — it never affects
-// the send result returned to the consumer.
+// own summary. The event is emitted through the shared Emitter, which detaches
+// the write from ctx cancellation and swallows recorder errors — it never
+// affects the send result returned to the consumer.
 func (e *WhatsAppExecutor) recordSendOutcome(ctx context.Context, job entity.Job, message entity.OutboundMessage, wamid string, sendErr error) {
-	if e.recorder == nil {
-		return
-	}
 	status := entity.ActivityStatusOK
 	outcome := "sent"
 	if sendErr != nil {
@@ -238,11 +237,7 @@ func (e *WhatsAppExecutor) recordSendOutcome(ctx context.Context, job entity.Job
 		ResourceType:      "job",
 		Payload:           payload,
 	}
-	go func() {
-		if err := e.recorder.Record(context.WithoutCancel(ctx), event); err != nil {
-			e.logger.Printf("observability: record send outcome %s: %v", event.Serial, err)
-		}
-	}()
+	e.emitter.Emit(ctx, event)
 }
 
 // nullIfEmptyJobSerial returns nil for an empty job serial so the jsonb keeps

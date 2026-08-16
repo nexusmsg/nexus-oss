@@ -15,6 +15,7 @@ import (
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/afikrim/waba-api-unofficial/internal/handlers/channel"
 	"github.com/afikrim/waba-api-unofficial/internal/handlers/whatsapp"
+	"github.com/afikrim/waba-api-unofficial/internal/observability"
 	"github.com/afikrim/waba-api-unofficial/internal/service"
 	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -64,12 +65,13 @@ func main() {
 
 	provider := apiconfig.NewClient(cfg.APIURL, cfg.InternalToken, cfg.WebhookConfigTTL, log.Default())
 	activityStore := activity.New(queueStore.Pool(), log.Default())
-	svc := service.NewMessage(log.Default(), provider, webhook.NewClient(), activityStore)
+	emitter := observability.NewEmitter(activityStore, log.Default())
+	svc := service.NewMessage(log.Default(), provider, webhook.NewClient(), emitter)
 
 	// The event-handler factory is composed here, in the root, so the
 	// whatsmeow adapter never constructs handlers-layer types itself.
 	handlerFactory := func(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, logger *log.Logger) func(ctx context.Context) func(evt any) {
-		return whatsapp.NewHandler(messageService, businessAccountID, phoneNumberID, displayPhone, activityStore, logger).Handle
+		return whatsapp.NewHandler(messageService, businessAccountID, phoneNumberID, displayPhone, emitter, logger).Handle
 	}
 
 	manager := whatsmeow.NewDeviceManager(container, svc, sessionStore, cfg.BusinessAccountID, handlerFactory, log.Default())
@@ -91,7 +93,7 @@ func main() {
 		log.Printf("whatsmeow: connect stored devices: %v", err)
 	}
 
-	executor := service.NewWhatsAppExecutor(manager, sessionStore, manager, jobsStore, activityStore, log.Default())
+	executor := service.NewWhatsAppExecutor(manager, sessionStore, manager, jobsStore, emitter, log.Default())
 	consumer := channel.NewConsumer(queueStore, executor, cfg.PollInterval, cfg.MaxAttempts, log.Default())
 
 	consumerErr := make(chan error, 1)

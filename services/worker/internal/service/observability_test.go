@@ -10,13 +10,14 @@ import (
 
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
+	"github.com/afikrim/waba-api-unofficial/internal/observability"
 	"github.com/google/uuid"
 )
 
 // newTestMessage builds a Message wired with a fake config provider, forwarder,
 // sleeper, and activity recorder for observability-capture tests.
 func newTestMessage(provider *fakeWebhookConfigProvider, forwarder *fakeWebhookForwarder, recorder *fakeActivityRecorder, sleeper *recordingSleeper) *Message {
-	svc := NewMessage(log.Default(), provider, forwarder, recorder)
+	svc := NewMessage(log.Default(), provider, forwarder, observability.NewEmitter(recorder, log.Default()))
 	if sleeper != nil {
 		svc.WithSleep(sleeper.Sleep)
 	}
@@ -287,5 +288,5 @@ func newTestExecutorWithRecorder(provider ports.OutboundSenderProvider, session 
 	if jobStore != nil {
 		jobStorePort = jobStore
 	}
-	return NewWhatsAppExecutor(provider, sessionStore, manager, jobStorePort, recorder, log.Default()), sessionStore, jobStore
+	return NewWhatsAppExecutor(provider, sessionStore, manager, jobStorePort, observability.NewEmitter(recorder, log.Default()), log.Default()), sessionStore, jobStore
 }

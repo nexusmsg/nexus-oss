@@ -13,6 +13,7 @@ import (
 	"github.com/afikrim/waba-api-unofficial/internal/core/entity"
 	"github.com/afikrim/waba-api-unofficial/internal/core/ports"
 	"github.com/afikrim/waba-api-unofficial/internal/handlers/whatsapp/dto"
+	"github.com/afikrim/waba-api-unofficial/internal/observability"
 	"github.com/google/uuid"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -24,14 +25,14 @@ type Handler struct {
 	businessAccountID string
 	phoneNumberID     string
 	displayPhone      string
-	recorder          ports.ActivityRecorder
+	emitter           *observability.Emitter
 	logger            *log.Logger
 }
 
-// NewHandler builds the whatsmeow inbound-event handler. recorder is the
-// observability activity recorder (ports.ActivityRecorder); it is optional and
-// nil-guarded — when nil, no event row is recorded.
-func NewHandler(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, recorder ports.ActivityRecorder, logger *log.Logger) *Handler {
+// NewHandler builds the whatsmeow inbound-event handler. emitter is the shared
+// fire-and-forget activity emitter; it is optional and nil-safe (a nil emitter
+// degrades to a no-op — no event row is recorded).
+func NewHandler(messageService ports.MessageService, businessAccountID, phoneNumberID, displayPhone string, emitter *observability.Emitter, logger *log.Logger) *Handler {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -40,22 +41,19 @@ func NewHandler(messageService ports.MessageService, businessAccountID, phoneNum
 		businessAccountID: businessAccountID,
 		phoneNumberID:     phoneNumberID,
 		displayPhone:      displayPhone,
-		recorder:          recorder,
+		emitter:           emitter,
 		logger:            logger,
 	}
 }
 
-// recordWhatsappEvent records a fire-and-forget activity row for the translated
-// inbound event, generating the serial app-side (so the caller can link
-// source_activity_serial without awaiting the write — plan §10 R3) and firing
-// the write in a goroutine detached from the request context (so a device
-// disconnect that cancels the incoming context cannot drop the write). A
-// recorder failure is swallowed and logged; it never affects the forward path.
+// recordWhatsappEvent builds the whatsapp_event activity row for the translated
+// inbound event and hands it to the shared emitter. The serial is generated
+// app-side (so the caller can link source_activity_serial without awaiting the
+// write — plan §10 R3); the emitter writes fire-and-forget, detached from the
+// request context, and swallows recorder errors so observability never affects
+// the forward path.
 func (h *Handler) recordWhatsappEvent(ctx context.Context, event entity.InboundEvent) uuid.UUID {
 	serial := uuid.New()
-	if h.recorder == nil {
-		return serial
-	}
 	payload := buildWhatsappEventPayload(event)
 	record := entity.ActivityEvent{
 		Serial:            serial,
@@ -67,12 +65,7 @@ func (h *Handler) recordWhatsappEvent(ctx context.Context, event entity.InboundE
 		WAMessageID:       event.Message.ID,
 		Payload:           payload,
 	}
-	// context.WithoutCancel detaches the write from ctx's cancellation (R3).
-	go func() {
-		if err := h.recorder.Record(context.WithoutCancel(ctx), record); err != nil {
-			h.logger.Printf("observability: record whatsapp_event %s: %v", serial, err)
-		}
-	}()
+	h.emitter.Emit(ctx, record)
 	return serial
 }
 
