@@ -7,32 +7,32 @@ Nexus OSS
     - Sessions
       - QR Login
       - Pairing Code
-      - Reconnect
+      - Reconnect (P2 — user-facing pause/resume API)
       - Logout
       - Connection Status
-    - Contacts
-    - Groups
+    - Contacts (P3 — deferred)
+    - Groups (P3 — deferred)
 - Messaging
   - Send Message
   - Receive Message
-  - Media
-  - Delivery Status
+  - Media (P1 — after observability)
+  - Delivery Status (P2 — inbound to webhooks done; observability UI covers visibility)
 - Integrations
   - Webhooks
     - Endpoint
     - Secret
     - Event Subscription
-    - Retry Policy
+    - Retry Policy (P0 — after observability)
 - Queue
-  - Retry Queue
+  - Retry Queue (P0 — after observability)
 - Developer Platform
   - REST API
-  - OpenAPI
-  - SDK
-  - CLI
-  - Documentation
-  - Examples
-- Observability
+  - OpenAPI (P2)
+  - SDK (P2)
+  - CLI (P2)
+  - Documentation (P2)
+  - Examples (P2)
+- Observability (P0 — in progress)
   - Metrics
     - API Metrics
     - Message Metrics

@@ -7,6 +7,8 @@ specific section, and so on.
 ```text
 docs/
   README.md            <- you are here (root index)
+  roadmap.md           <- feature priorities & implementation order (P0–P3)
+  oss-feature.md       <- full feature list with inline priority tags
   architecture/        <- cross-cutting runtime flows & plans
   services/            <- per-service documentation (worker; the HTTP API
                           lives in apps/dashboard)
@@ -26,6 +28,22 @@ account.
 | Worker | `services/worker/` | Go, WhatsMeow, pgx | [services/worker](services/worker/) |
 | DB migrations | `shared/db/migrations/` | SQL, golang-migrate | [shared](shared/) |
 | Architecture & flows | `docs/architecture/`, `docs/flow.md` | mermaid flows | [architecture](architecture/) |
+
+## Roadmap & feature status
+
+- [roadmap.md](roadmap.md) — prioritised implementation order (P0 → P3) with
+  notes and checkboxes.
+- [oss-feature.md](oss-feature.md) — full feature tree with inline priority
+  tags.
+
+Current execution order:
+
+| Phase | Features | Status |
+|-------|----------|--------|
+| P0 | Observability, Retry Policy, Retry Queue | In progress |
+| P1 | Media | Blocked on P0 |
+| P2 | Reconnect API, Delivery Status, OpenAPI, SDK, CLI, Docs, Examples | Planned |
+| P3 | Contacts, Groups | Deferred |
 
 ## How to navigate
 
