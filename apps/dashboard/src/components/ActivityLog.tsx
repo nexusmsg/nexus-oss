@@ -36,29 +36,14 @@ import {
   TableWrap,
 } from "@/components";
 import { IconActivity } from "@/components/icons";
-import type { ActivityEvent, ActivityStatus, ActivityType } from "@/lib/api/types";
-import { DUMMY_ACTIVITIES } from "@/app/(app)/observability/dummy-data";
+import type { ActivityEvent, ActivityType } from "@/lib/api/types";
+import {
+  STATUS_BADGE,
+  TYPE_BADGE,
+  TYPE_LABELS,
+  formatTime,
+} from "@/lib/observability/activity";
 import "./ActivityLog.css";
-
-/* ── Type/status badge labels ─────────────────────────────── */
-
-const TYPE_LABELS: Record<ActivityType, string> = {
-  api_request: "API Request",
-  whatsapp_event: "WhatsApp Event",
-  webhook_delivery: "Webhook",
-};
-
-const TYPE_BADGE: Record<ActivityType, "info" | "success" | "warning"> = {
-  api_request: "info",
-  whatsapp_event: "success",
-  webhook_delivery: "warning",
-};
-
-const STATUS_BADGE: Record<ActivityStatus, "success" | "danger" | "warning"> = {
-  ok: "success",
-  error: "danger",
-  attempted: "warning",
-};
 
 type TabId = "all" | ActivityType;
 
@@ -71,23 +56,10 @@ const TABS: { id: TabId; label: string }[] = [
 
 const COLUMNS = ["Type", "Summary", "Phone", "Status", "Time"] as const;
 
-/* ── Helpers ──────────────────────────────────────────────── */
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 /* ── Component ────────────────────────────────────────────── */
 
 export interface ActivityLogProps {
-  /** Dummy data default; swap for the `useActivities` result later. */
+  /** Activity rows to display (e.g. `useActivities().data`). */
   activities?: ActivityEvent[];
   /** When true and the list is empty, render 3 skeleton rows. */
   loading?: boolean;
@@ -100,7 +72,7 @@ export interface ActivityLogProps {
 }
 
 export function ActivityLog({
-  activities = DUMMY_ACTIVITIES,
+  activities = [],
   loading = false,
   error = null,
   onNavigate,
@@ -255,7 +227,9 @@ export function ActivityLog({
                         {a.status}
                       </Badge>
                     </TableCell>
-                    <Mono className="text-muted">{formatTime(a.createdAt)}</Mono>
+                    <Mono className="text-muted">
+                      {formatTime(a.createdAt, { withYear: false })}
+                    </Mono>
                   </TableRow>
                 ))}
                 {visible.length === 0 && (

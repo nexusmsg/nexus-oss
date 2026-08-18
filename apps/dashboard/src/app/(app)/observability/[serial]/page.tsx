@@ -15,63 +15,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Card, CardBody, CardHeader, CardTitle } from "@/components";
 import { IconActivity } from "@/components/icons";
 import { getActivity } from "@/lib/api/observability";
-import type {
-  ActivityEvent,
-  ActivityResourceType,
-  ActivityStatus,
-  ActivityType,
-} from "@/lib/api/types";
+import {
+  Property,
+  RESOURCE_ROUTE,
+  STATUS_BADGE,
+  TYPE_BADGE,
+  TYPE_LABELS,
+  formatTime,
+} from "@/lib/observability/activity";
+import type { ActivityEvent } from "@/lib/api/types";
 import { ApiError } from "@/lib/api/types";
-
-/* ── Badge mapping (shared with the list) ─────────────────── */
-
-const TYPE_LABELS: Record<ActivityType, string> = {
-  api_request: "API Request",
-  whatsapp_event: "WhatsApp Event",
-  webhook_delivery: "Webhook",
-};
-
-const TYPE_BADGE: Record<ActivityType, "info" | "success" | "warning"> = {
-  api_request: "info",
-  whatsapp_event: "success",
-  webhook_delivery: "warning",
-};
-
-const STATUS_BADGE: Record<ActivityStatus, "success" | "danger" | "warning"> = {
-  ok: "success",
-  error: "danger",
-  attempted: "warning",
-};
-
-/* AC-104: resource kind → existing list page route. Kinds without a
- * dedicated page fall back to monospace text. */
-const RESOURCE_ROUTE: Partial<Record<ActivityResourceType, string>> = {
-  session: "/sessions",
-  webhook_config: "/webhooks",
-  api_key: "/api-keys",
-};
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function Property({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-t border-line-light py-3 first:border-t-0">
-      <dt className="text-sm text-muted">{label}</dt>
-      <dd className="font-mono text-sm text-right break-all">{children}</dd>
-    </div>
-  );
-}
 
 /* ── Loading skeleton (AC-108) ────────────────────────────── */
 
@@ -230,7 +183,9 @@ export default function ActivityDetailPage() {
               {activityRow.status}
             </Badge>
           </CardTitle>
-          <span className="text-sm text-muted">{formatTime(activityRow.createdAt)}</span>
+          <span className="text-sm text-muted">
+            {formatTime(activityRow.createdAt, { withSeconds: true })}
+          </span>
         </CardHeader>
         <CardBody>
           <p className="text-md font-medium">{activityRow.summary}</p>
@@ -324,7 +279,7 @@ export default function ActivityDetailPage() {
                       </Badge>
                     </td>
                     <td className="px-5 py-2.5 border-t border-line-light text-sm text-muted whitespace-nowrap">
-                      {formatTime(a.createdAt)}
+                      {formatTime(a.createdAt, { withSeconds: true })}
                     </td>
                   </tr>
                 ))}
