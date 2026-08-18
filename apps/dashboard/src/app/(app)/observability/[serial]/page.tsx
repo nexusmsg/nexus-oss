@@ -15,7 +15,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Card, CardBody, CardHeader, CardTitle } from "@/components";
 import { IconActivity } from "@/components/icons";
 import { getActivity } from "@/lib/api/observability";
-import type { ActivityEvent, ActivityStatus, ActivityType } from "@/lib/api/types";
+import type {
+  ActivityEvent,
+  ActivityResourceType,
+  ActivityStatus,
+  ActivityType,
+} from "@/lib/api/types";
 import { ApiError } from "@/lib/api/types";
 
 /* ── Badge mapping (shared with the list) ─────────────────── */
@@ -36,6 +41,14 @@ const STATUS_BADGE: Record<ActivityStatus, "success" | "danger" | "warning"> = {
   ok: "success",
   error: "danger",
   attempted: "warning",
+};
+
+/* AC-104: resource kind → existing list page route. Kinds without a
+ * dedicated page fall back to monospace text. */
+const RESOURCE_ROUTE: Partial<Record<ActivityResourceType, string>> = {
+  session: "/sessions",
+  webhook_config: "/webhooks",
+  api_key: "/api-keys",
 };
 
 function formatTime(iso: string): string {
@@ -251,7 +264,16 @@ export default function ActivityDetailPage() {
             )}
             {activityRow.resourceType && activityRow.resourceSerial && (
               <Property label={`Resource (${activityRow.resourceType})`}>
-                {activityRow.resourceSerial}
+                {RESOURCE_ROUTE[activityRow.resourceType] ? (
+                  <Link
+                    href={RESOURCE_ROUTE[activityRow.resourceType]!}
+                    className="text-accent hover:underline"
+                  >
+                    {activityRow.resourceSerial}
+                  </Link>
+                ) : (
+                  activityRow.resourceSerial
+                )}
               </Property>
             )}
             {activityRow.requestSerial && (
