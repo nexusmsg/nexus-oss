@@ -1,4 +1,4 @@
-name: waba-api-unofficial
+name: nexus-oss
 
 # Shared environment for the two worker binaries (same image, different entry).
 x-worker-env: &worker-env
