@@ -1,0 +1,40 @@
+/* ── ActivityLog ────────────────────────────────────────────
+ * CSS for the type filter tabs. The table, badges, skeleton, and
+ * empty/error states use the shared `@/components` primitives so they
+ * stay identical to the API Keys table — this file only styles the
+ * ActivityLog-specific type tabs.
+ * ─────────────────────────────────────────────────────────── */
+
+.activity-log__tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-elevated);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  width: fit-content;
+}
+
+.activity-log__tab {
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--duration-normal) var(--ease-default),
+    background-color var(--duration-normal) var(--ease-default);
+}
+
+.activity-log__tab:hover {
+  color: var(--color-fg);
+  background: var(--color-hover);
+}
+
+.activity-log__tab--active {
+  color: var(--color-accent);
+  background: var(--color-accent-dim);
+}
