@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar, Topbar } from "@/components";
 import {
+  IconActivity,
   IconDashboard,
   IconKey,
   IconPhone,
@@ -28,6 +29,7 @@ const sidebarGroups = [
   {
     title: "Monitor",
     items: [
+      { icon: <IconActivity />, label: "Activity", href: "/observability" },
       { icon: <IconJobs />, label: "Jobs", href: "/jobs" },
       { icon: <IconSettings />, label: "Settings", href: "/settings" },
     ],
