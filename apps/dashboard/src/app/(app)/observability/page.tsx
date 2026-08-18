@@ -1,14 +1,17 @@
 "use client";
 
 import { ActivityLog } from "@/components/ActivityLog";
+import { useActivities } from "@/lib/hooks/useActivities";
 
 /* ── Activity List Page ─────────────────────────────────────
- * Renders the observability activity log. Uses dummy data for now;
- * swap `ActivityLog` props to the `useActivities` hook once the UI is
- * integrated with the live `/api/v1/observability` endpoint.
+ * Renders the observability activity log against the live
+ * `/api/v1/observability` endpoint via the `useActivities` hook.
+ * Type filtering happens client-side inside `ActivityLog`.
  * ─────────────────────────────────────────────────────────── */
 
 export default function ObservabilityPage() {
+  const { data, loading, error, refresh } = useActivities();
+
   return (
     <>
       <div className="flex items-center justify-between">
@@ -20,7 +23,12 @@ export default function ObservabilityPage() {
         </div>
       </div>
 
-      <ActivityLog />
+      <ActivityLog
+        activities={data}
+        loading={loading}
+        error={error}
+        onRefresh={() => void refresh()}
+      />
     </>
   );
 }

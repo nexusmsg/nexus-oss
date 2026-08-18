@@ -95,6 +95,8 @@ export interface ActivityLogProps {
   error?: string | null;
   /** Row click handler — defaults to window navigation to the detail route. */
   onNavigate?: (serial: string) => void;
+  /** Error-banner retry action (e.g. `useActivities().refresh`). */
+  onRefresh?: () => void;
 }
 
 export function ActivityLog({
@@ -102,6 +104,7 @@ export function ActivityLog({
   loading = false,
   error = null,
   onNavigate,
+  onRefresh,
 }: ActivityLogProps) {
   const [activeTab, setActiveTab] = useState<TabId>("all");
 
@@ -129,6 +132,15 @@ export function ActivityLog({
       {error && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger/8 px-4 py-3 text-sm text-danger">
           <span>{error}</span>
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="shrink-0 font-semibold underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
 

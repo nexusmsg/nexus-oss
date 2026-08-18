@@ -1,11 +1,22 @@
 "use client";
 
+/* ── Activity Detail Page ──
+ *
+ * Fetches a single activity plus its related rows from
+ * `GET /api/v1/observability/:serial` (bootstrap auth) and renders the
+ * header, correlation properties, formatted-JSON payload, and a clickable
+ * Related Activity list. Handles loading (AC-108), not-found (AC-107), and
+ * fetch error states.
+ */
+
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Card, CardBody, CardHeader, CardTitle } from "@/components";
 import { IconActivity } from "@/components/icons";
-import { DUMMY_ACTIVITIES, getDummyActivity } from "../dummy-data";
-import type { ActivityStatus, ActivityType } from "@/lib/api/types";
+import { getActivity } from "@/lib/api/observability";
+import type { ActivityEvent, ActivityStatus, ActivityType } from "@/lib/api/types";
+import { ApiError } from "@/lib/api/types";
 
 /* ── Badge mapping (shared with the list) ─────────────────── */
 
@@ -49,17 +60,110 @@ function Property({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
+/* ── Loading skeleton (AC-108) ────────────────────────────── */
+
+function DetailSkeleton() {
+  const pulse = "h-4 animate-pulse rounded bg-elevated";
+  return (
+    <div className="flex flex-col gap-6">
+      <div className={`w-24 ${pulse}`} />
+      <Card>
+        <CardHeader>
+          <div className={`w-40 ${pulse}`} />
+        </CardHeader>
+        <CardBody className="space-y-2">
+          <div className={`w-3/4 ${pulse}`} />
+          <div className={`w-1/2 ${pulse}`} />
+        </CardBody>
+      </Card>
+      <Card>
+        <CardHeader>
+          <div className={`w-24 ${pulse}`} />
+        </CardHeader>
+        <CardBody className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center justify-between gap-4 border-t border-line-light py-3 first:border-t-0">
+              <div className={`w-32 ${pulse}`} />
+              <div className={`w-40 ${pulse}`} />
+            </div>
+          ))}
+        </CardBody>
+      </Card>
+      <Card>
+        <CardHeader>
+          <div className={`w-20 ${pulse}`} />
+        </CardHeader>
+        <CardBody className="p-0">
+          <div className={`m-5 h-40 ${pulse}`} />
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+/* ── Page ─────────────────────────────────────────────────── */
+
 export default function ActivityDetailPage() {
   const params = useParams<{ serial: string }>();
   const serial = Array.isArray(params.serial) ? params.serial[0] : params.serial;
-  const activity = getDummyActivity(serial);
 
-  if (!activity) {
+  const [state, setState] = useState<"loading" | "ready" | "notfound" | "error">(
+    "loading",
+  );
+  const [activity, setActivity] = useState<ActivityEvent | null>(null);
+  const [related, setRelated] = useState<ActivityEvent[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  const load = useCallback(async (s: string) => {
+    if (!mountedRef.current) return;
+    setState("loading");
+    setError(null);
+    try {
+      const res = await getActivity(s);
+      if (!mountedRef.current) return;
+      setActivity(res.activity);
+      setRelated(res.related);
+      setState("ready");
+    } catch (e) {
+      if (!mountedRef.current) return;
+      if (e instanceof ApiError && e.status === 404) {
+        setState("notfound");
+        return;
+      }
+      setError(e instanceof Error ? e.message : "Failed to load activity");
+      setState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch, guarded by mountedRef
+    void load(serial);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [serial, load]);
+
+  const BackLink = (
+    <Link href="/observability" className="text-sm text-accent hover:underline">
+      ← Back to Activity
+    </Link>
+  );
+
+  if (state === "loading") {
+    return (
+      <div className="flex flex-col gap-6">
+        {BackLink}
+        <DetailSkeleton />
+      </div>
+    );
+  }
+
+  if (state === "notfound") {
     return (
       <div>
-        <Link href="/observability" className="text-sm text-accent hover:underline">
-          ← Back to Activity
-        </Link>
+        {BackLink}
         <div className="mt-8 flex flex-col items-center justify-center rounded-lg border border-line bg-surface p-16 text-center">
           <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-accent-dim text-accent">
             <IconActivity size={28} />
@@ -76,33 +180,50 @@ export default function ActivityDetailPage() {
     );
   }
 
-  const related = DUMMY_ACTIVITIES.filter(
-    (a) => a.serial !== activity.serial && a.sourceActivitySerial === activity.serial,
-  );
+  if (state === "error") {
+    return (
+      <div className="flex flex-col gap-6">
+        {BackLink}
+        <div className="flex items-center justify-between gap-3 rounded-md border border-danger/20 bg-danger/8 px-4 py-3 text-sm text-danger">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => void load(serial)}
+            className="shrink-0 font-semibold underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-  const payloadJson = JSON.stringify(activity.payload, null, 2);
+  const activityRow = activity!;
+  const payloadJson = JSON.stringify(activityRow.payload, null, 2);
 
   return (
     <div className="flex flex-col gap-6">
       {/* Back link */}
-      <Link href="/observability" className="text-sm text-accent hover:underline">
-        ← Back to Activity
-      </Link>
+      {BackLink}
 
       {/* Header */}
       <Card>
         <CardHeader>
           <CardTitle>
-            <Badge variant={TYPE_BADGE[activity.type]}>{TYPE_LABELS[activity.type]}</Badge>
-            <Badge variant={STATUS_BADGE[activity.status]} dot>
-              {activity.status}
+            <Badge variant={TYPE_BADGE[activityRow.type]}>
+              {TYPE_LABELS[activityRow.type]}
+            </Badge>
+            <Badge variant={STATUS_BADGE[activityRow.status]} dot>
+              {activityRow.status}
             </Badge>
           </CardTitle>
-          <span className="text-sm text-muted">{formatTime(activity.createdAt)}</span>
+          <span className="text-sm text-muted">{formatTime(activityRow.createdAt)}</span>
         </CardHeader>
         <CardBody>
-          <p className="text-md font-medium">{activity.summary}</p>
-          <p className="mt-1 font-mono text-sm text-muted break-all">{activity.serial}</p>
+          <p className="text-md font-medium">{activityRow.summary}</p>
+          <p className="mt-1 font-mono text-sm text-muted break-all">
+            {activityRow.serial}
+          </p>
         </CardBody>
       </Card>
 
@@ -113,26 +234,28 @@ export default function ActivityDetailPage() {
         </CardHeader>
         <CardBody className="py-1">
           <dl>
-            <Property label="Business Account">{activity.businessAccountId}</Property>
-            {activity.phoneNumberId && (
-              <Property label="Phone Number ID">{activity.phoneNumberId}</Property>
+            <Property label="Business Account">{activityRow.businessAccountId}</Property>
+            {activityRow.phoneNumberId && (
+              <Property label="Phone Number ID">{activityRow.phoneNumberId}</Property>
             )}
-            {activity.waMessageId && (
-              <Property label="WA Message ID">{activity.waMessageId}</Property>
+            {activityRow.waMessageId && (
+              <Property label="WA Message ID">{activityRow.waMessageId}</Property>
             )}
-            {activity.jobSerial && (
-              <Property label="Job Serial">{activity.jobSerial}</Property>
+            {activityRow.jobSerial && (
+              <Property label="Job Serial">{activityRow.jobSerial}</Property>
             )}
-            {activity.sourceActivitySerial && (
-              <Property label="Source Activity">{activity.sourceActivitySerial}</Property>
-            )}
-            {activity.resourceType && activity.resourceSerial && (
-              <Property label={`Resource (${activity.resourceType})`}>
-                {activity.resourceSerial}
+            {activityRow.sourceActivitySerial && (
+              <Property label="Source Activity">
+                {activityRow.sourceActivitySerial}
               </Property>
             )}
-            {activity.requestSerial && (
-              <Property label="Request Serial">{activity.requestSerial}</Property>
+            {activityRow.resourceType && activityRow.resourceSerial && (
+              <Property label={`Resource (${activityRow.resourceType})`}>
+                {activityRow.resourceSerial}
+              </Property>
+            )}
+            {activityRow.requestSerial && (
+              <Property label="Request Serial">{activityRow.requestSerial}</Property>
             )}
           </dl>
         </CardBody>
